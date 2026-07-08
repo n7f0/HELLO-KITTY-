@@ -128,15 +128,21 @@ async def update_user_data(user_id, data):
 import google.generativeai as genai
 
 cliente_ia = None
-MODELO_IA = "gemini-1.5-flash"  # Modelo gratuito e estável
+MODELO_IA = "gemini-1.0-pro"
 
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         cliente_ia = genai.GenerativeModel(MODELO_IA)
-        logging.info("IA Gemini inicializada com sucesso.")
+        logging.info(f"IA Gemini inicializada com modelo {MODELO_IA}.")
     except Exception as e:
-        logging.error(f"Erro ao inicializar Gemini: {e}")
+        logging.error(f"Erro ao inicializar Gemini com {MODELO_IA}: {e}")
+        try:
+            cliente_ia = genai.GenerativeModel("gemini-pro")
+            logging.info("IA Gemini inicializada com modelo gemini-pro (fallback).")
+        except Exception as e2:
+            logging.error(f"Erro ao inicializar Gemini com gemini-pro: {e2}")
+            cliente_ia = None
 
 # =================== BOT ===================
 intents = discord.Intents.default()
@@ -750,10 +756,10 @@ class LojaCafeView(View):
         view.add_item(select)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# ---------- AceitarRecusarTrocaView (NOVO SISTEMA 100% BOTÕES) ----------
+# ---------- AceitarRecusarTrocaView ----------
 class AceitarRecusarTrocaView(View):
     def __init__(self, trade_id, solicitante_id, alvo_id, personagem_oferecido):
-        super().__init__(timeout=300) # Expira em 5 minutos
+        super().__init__(timeout=300)
         self.trade_id = trade_id
         self.solicitante_id = solicitante_id
         self.alvo_id = alvo_id
@@ -784,7 +790,6 @@ class AceitarRecusarTrocaView(View):
         async def select_cb(interaction_select: discord.Interaction):
             personagem_dado = select.values[0]
             
-            # Recarregar os dados para previnir bugs
             dados_solicitante = await get_user_data(self.solicitante_id)
             dados_alvo_final = await get_user_data(self.alvo_id)
 
@@ -800,10 +805,8 @@ class AceitarRecusarTrocaView(View):
                 await interaction_select.response.send_message("Você não possui mais esse personagem.", ephemeral=True)
                 return
 
-            # Efetuar a troca
             dados_solicitante["personagens"].remove(self.personagem_oferecido)
             dados_solicitante["personagens"].append(personagem_dado)
-            
             dados_alvo_final["personagens"].remove(personagem_dado)
             dados_alvo_final["personagens"].append(self.personagem_oferecido)
 
@@ -812,12 +815,10 @@ class AceitarRecusarTrocaView(View):
             dados_solicitante.setdefault("historico_trocas", []).append(registro)
             dados_alvo_final.setdefault("historico_trocas", []).append(registro)
             
-            # Atualizar status de missões se elas existirem na estrutura
             if "trocas" in dados_solicitante.get("missoes_diarias", {}):
                 dados_solicitante["missoes_diarias"]["trocas"] += 1
             if "trocas" in dados_solicitante.get("missoes_semanais", {}):
                 dados_solicitante["missoes_semanais"]["trocas"] += 1
-                
             if "trocas" in dados_alvo_final.get("missoes_diarias", {}):
                 dados_alvo_final["missoes_diarias"]["trocas"] += 1
             if "trocas" in dados_alvo_final.get("missoes_semanais", {}):
@@ -833,9 +834,8 @@ class AceitarRecusarTrocaView(View):
             embed = interaction.message.embeds[0]
             embed.color = 0x3498DB
             embed.description = f"✅ **Troca Concluída!**\n{registro}"
-            
             await interaction.message.edit(embed=embed, view=self)
-            await interaction_select.response.send_message(f"✅ Troca concluída com sucesso!", ephemeral=True)
+            await interaction_select.response.send_message("✅ Troca concluída com sucesso!", ephemeral=True)
 
             try:
                 solicitante_user = await bot.fetch_user(int(self.solicitante_id))
@@ -861,7 +861,6 @@ class AceitarRecusarTrocaView(View):
         embed = interaction.message.embeds[0]
         embed.color = 0xE74C3C
         embed.description = f"❌ Troca recusada por {interaction.user.mention}."
-        
         await interaction.message.edit(embed=embed, view=self)
         await interaction.response.send_message("A troca foi recusada com sucesso.", ephemeral=True)
 
@@ -918,14 +917,11 @@ class AmigosView(View):
             
             async def membro_cb(interaction_m: discord.Interaction):
                 alvo_id = select_m.values[0]
-                
-                # Checagem de segurança rápida para garantir que ainda tenha o personagem
                 check_dados = await get_user_data(uid)
                 if personagem_oferecido not in check_dados["personagens"]:
                     await interaction_m.response.send_message("Você não possui mais esse personagem.", ephemeral=True)
                     return
 
-                # Inserir pendente no banco de dados
                 async with db_pool.acquire() as conn:
                     trade_id = await conn.fetchval('''
                         INSERT INTO trocas (solicitante_id, alvo_id, personagem_oferecido, timestamp)
@@ -1085,11 +1081,16 @@ class TutorialAjudaView(View):
 
 @bot.tree.command(name="hellokitty", description="Abre o painel do Hello Kitty Café ☕")
 async def hellokitty(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     embed = discord.Embed(title="☕ Hello Kitty Café 🎀",
                           description="**Clique nos botões para explorar o café!**",
                           color=0xFF69B4)
-    embed.set_image(url="attachment://Hello_kitty.png")
-    await interaction.response.send_message(embed=embed, file=discord.File("Hello_kitty.png"), view=MenuPrincipal())
+    if os.path.exists("Hello_kitty.png"):
+        file = discord.File("Hello_kitty.png", filename="Hello_kitty.png")
+        embed.set_image(url="attachment://Hello_kitty.png")
+        await interaction.followup.send(embed=embed, file=file, view=MenuPrincipal())
+    else:
+        await interaction.followup.send(embed=embed, view=MenuPrincipal())
 
 @bot.tree.command(name="perfil", description="Veja seu perfil no Hello Kitty Café")
 async def perfil(interaction: discord.Interaction):
@@ -1127,29 +1128,6 @@ async def ranking(interaction: discord.Interaction):
     embed = discord.Embed(title="🏆 Ranking do Café", description=desc or "Nenhum jogador ainda.", color=0xFFD700)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="listadedesejos", description="Veja sua lista de desejos")
-async def lista_desejos(interaction: discord.Interaction):
-    dados = await get_user_data(str(interaction.user.id))
-    desejos = dados.get("lista_desejos", [])
-    if not desejos:
-        await interaction.response.send_message("Sua lista de desejos está vazia. Use /adicionardesejo!", ephemeral=True)
-        return
-    await interaction.response.send_message("🎀 **Sua Lista de Desejos:**\n" + "\n".join(f"• {d}" for d in desejos))
-
-@bot.tree.command(name="adicionardesejo", description="Adicione um personagem à lista de desejos")
-async def adicionar_desejo(interaction: discord.Interaction, personagem: str):
-    dados = await get_user_data(str(interaction.user.id))
-    uid = str(interaction.user.id)
-    if personagem not in [p["nome"] for p in PERSONAGENS]:
-        await interaction.response.send_message("Personagem não encontrado.", ephemeral=True)
-        return
-    if personagem in dados.get("lista_desejos", []):
-        await interaction.response.send_message("Já está na sua lista de desejos!", ephemeral=True)
-        return
-    dados.setdefault("lista_desejos", []).append(personagem)
-    await update_user_data(uid, dados)
-    await interaction.response.send_message(f"🌸 {personagem} adicionado à sua lista de desejos!")
-
 @bot.tree.command(name="drop", description="Resgate seu drop a cada 4 horas!")
 async def drop(interaction: discord.Interaction):
     uid = str(interaction.user.id)
@@ -1175,20 +1153,25 @@ async def drop(interaction: discord.Interaction):
 
 class DropView(View):
     def __init__(self, uid, disponivel):
-        super().__init__(timeout=60)
+        super().__init__(timeout=300)  # 5 minutos para evitar expiração precoce
         self.uid = uid
         self.disponivel = disponivel
-        if disponivel:
-            self.add_item(Button(label="Resgatar 🎁", style=discord.ButtonStyle.success, custom_id="resgatar_drop"))
 
     @discord.ui.button(label="Resgatar 🎁", style=discord.ButtonStyle.success, custom_id="resgatar_drop")
     async def resgatar_drop(self, interaction: discord.Interaction, button: Button):
+        # Desabilitar o botão imediatamente para evitar duplo clique
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+
         dados = await get_user_data(self.uid)
         agora = datetime.datetime.now(timezone.utc).timestamp()
         ultimo = dados.get("ultimo_drop", 0)
+
         if agora - ultimo < 4 * 3600:
-            await interaction.response.send_message("⏳ Ainda não passou 4 horas!", ephemeral=True)
+            await interaction.followup.send("⏳ Ainda não passou 4 horas desde seu último drop!", ephemeral=True)
+            # Reabilitar o botão? Melhor deixar desabilitado para não gerar confusão.
             return
+
         premios = [
             ("💗", "coracoes", random.randint(3, 8)),
             ("🍬", "doces", random.randint(2, 5)),
@@ -1199,13 +1182,14 @@ class DropView(View):
         dados[escolha[1]] = dados.get(escolha[1], 0) + escolha[2]
         dados["ultimo_drop"] = agora
         await update_user_data(self.uid, dados)
+
         embed = discord.Embed(
             title="🎁 Drop Resgatado!",
             description=f"Você ganhou **{escolha[2]} {escolha[0]}**!",
             color=0x2ECC71
         )
         embed.set_footer(text="Próximo drop em 4 horas.")
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.edit_original_response(embed=embed, view=None)
 
 @bot.tree.command(name="minijogo", description="Jogue um minijogo: roleta, memória ou adivinhe")
 @app_commands.choices(jogo=[
@@ -1263,7 +1247,13 @@ async def historinha(interaction: discord.Interaction):
         await interaction.followup.send(f"📖 {texto}")
     except Exception as e:
         logging.error(f"Erro na historinha: {e}")
-        await interaction.followup.send("🌸 Ops! A Hello Kitty está com preguiça de escrever hoje... tente de novo mais tarde. 😿")
+        try:
+            fallback_model = genai.GenerativeModel("gemini-pro")
+            response = fallback_model.generate_content(prompt)
+            texto = response.text[:1500]
+            await interaction.followup.send(f"📖 {texto}")
+        except:
+            await interaction.followup.send("🌸 Ops! A Hello Kitty está com preguiça de escrever hoje... tente de novo mais tarde. 😿")
 
 @bot.tree.command(name="conversar", description="Fale com a Hello Kitty!")
 async def conversar(interaction: discord.Interaction, mensagem: str):
@@ -1281,7 +1271,13 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
         await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
     except Exception as e:
         logging.error(f"Erro na IA: {e}")
-        await interaction.followup.send("🌸 Ops! A Hello Kitty está descansando... tente de novo mais tarde. 😿")
+        try:
+            fallback_model = genai.GenerativeModel("gemini-pro")
+            response = fallback_model.generate_content(prompt)
+            texto = response.text[:1800]
+            await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
+        except:
+            await interaction.followup.send("🌸 Ops! A Hello Kitty está descansando... tente de novo mais tarde. 😿")
 
 # =================== EVENTOS ===================
 
