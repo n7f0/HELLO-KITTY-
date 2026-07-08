@@ -21,7 +21,11 @@ ARQUIVO_IA = "ia_config.json"
 
 # Configurar Gemini (nova SDK)
 cliente_ia = None
-MODELO_IA = "gemini-1.5-flash"  # modelo com cota gratuita
+
+# CORREÇÃO APLICADA: O modelo gemini-1.5-flash estava gerando erro 404 (não encontrado). 
+# Atualizado para a versão atualizada suportada gratuitamente.
+MODELO_IA = "gemini-2.5-flash"  
+
 if GEMINI_API_KEY:
     cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
 
