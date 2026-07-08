@@ -295,7 +295,6 @@ ALBUNS = {
 
 # ---------- Funções auxiliares ----------
 def tem_efeito(uid, dados, efeito_nome):
-    if uid not in dados: return False
     for nome in set(dados["personagens"]):
         if nome == "Nenê" and efeito_nome == "nene": return True
         for p in PERSONAGENS:
@@ -751,6 +750,125 @@ class LojaCafeView(View):
         view.add_item(select)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+# ---------- AceitarRecusarTrocaView (NOVO SISTEMA 100% BOTÕES) ----------
+class AceitarRecusarTrocaView(View):
+    def __init__(self, trade_id, solicitante_id, alvo_id, personagem_oferecido):
+        super().__init__(timeout=300) # Expira em 5 minutos
+        self.trade_id = trade_id
+        self.solicitante_id = solicitante_id
+        self.alvo_id = alvo_id
+        self.personagem_oferecido = personagem_oferecido
+
+    @discord.ui.button(label="Aceitar ✅", style=discord.ButtonStyle.success)
+    async def aceitar(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.alvo_id:
+            await interaction.response.send_message("Essa troca não é direcionada a você.", ephemeral=True)
+            return
+
+        async with db_pool.acquire() as conn:
+            status = await conn.fetchval('SELECT status FROM trocas WHERE id = $1', self.trade_id)
+            if status != 'pendente':
+                await interaction.response.send_message("Esta solicitação já foi respondida ou expirou.", ephemeral=True)
+                return
+
+        dados_alvo = await get_user_data(self.alvo_id)
+        personagens_alvo = list(set(dados_alvo["personagens"]))
+        
+        if not personagens_alvo:
+            await interaction.response.send_message("Você não tem personagens para trocar.", ephemeral=True)
+            return
+
+        options = [discord.SelectOption(label=f"{nome} {PERSONAGENS_EMOJI.get(nome, '')}", value=nome) for nome in personagens_alvo[:25]]
+        select = Select(placeholder="Escolha o personagem que você dará", options=options)
+
+        async def select_cb(interaction_select: discord.Interaction):
+            personagem_dado = select.values[0]
+            
+            # Recarregar os dados para previnir bugs
+            dados_solicitante = await get_user_data(self.solicitante_id)
+            dados_alvo_final = await get_user_data(self.alvo_id)
+
+            if self.personagem_oferecido not in dados_solicitante["personagens"]:
+                await interaction_select.response.send_message("O solicitante não possui mais esse personagem.", ephemeral=True)
+                async with db_pool.acquire() as conn2:
+                    await conn2.execute('UPDATE trocas SET status = "cancelada" WHERE id = $1', self.trade_id)
+                self.disable_all_items()
+                await interaction.message.edit(view=self)
+                return
+
+            if personagem_dado not in dados_alvo_final["personagens"]:
+                await interaction_select.response.send_message("Você não possui mais esse personagem.", ephemeral=True)
+                return
+
+            # Efetuar a troca
+            dados_solicitante["personagens"].remove(self.personagem_oferecido)
+            dados_solicitante["personagens"].append(personagem_dado)
+            
+            dados_alvo_final["personagens"].remove(personagem_dado)
+            dados_alvo_final["personagens"].append(self.personagem_oferecido)
+
+            registro = f"{interaction.user.name} deu **{personagem_dado}** e recebeu **{self.personagem_oferecido}** de <@{self.solicitante_id}>"
+
+            dados_solicitante.setdefault("historico_trocas", []).append(registro)
+            dados_alvo_final.setdefault("historico_trocas", []).append(registro)
+            
+            # Atualizar status de missões se elas existirem na estrutura
+            if "trocas" in dados_solicitante.get("missoes_diarias", {}):
+                dados_solicitante["missoes_diarias"]["trocas"] += 1
+            if "trocas" in dados_solicitante.get("missoes_semanais", {}):
+                dados_solicitante["missoes_semanais"]["trocas"] += 1
+                
+            if "trocas" in dados_alvo_final.get("missoes_diarias", {}):
+                dados_alvo_final["missoes_diarias"]["trocas"] += 1
+            if "trocas" in dados_alvo_final.get("missoes_semanais", {}):
+                dados_alvo_final["missoes_semanais"]["trocas"] += 1
+
+            await update_user_data(self.solicitante_id, dados_solicitante)
+            await update_user_data(self.alvo_id, dados_alvo_final)
+
+            async with db_pool.acquire() as conn2:
+                await conn2.execute('UPDATE trocas SET status = "concluida" WHERE id = $1', self.trade_id)
+
+            self.disable_all_items()
+            embed = interaction.message.embeds[0]
+            embed.color = 0x3498DB
+            embed.description = f"✅ **Troca Concluída!**\n{registro}"
+            
+            await interaction.message.edit(embed=embed, view=self)
+            await interaction_select.response.send_message(f"✅ Troca concluída com sucesso!", ephemeral=True)
+
+            try:
+                solicitante_user = await bot.fetch_user(int(self.solicitante_id))
+                await solicitante_user.send(f"✅ A sua troca com {interaction.user.display_name} foi concluída! Você recebeu **{personagem_dado}** e deu **{self.personagem_oferecido}**.")
+            except:
+                pass
+
+        select.callback = select_cb
+        view = View(timeout=60)
+        view.add_item(select)
+        await interaction.response.send_message("Escolha o personagem para finalizar a troca:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Recusar ❌", style=discord.ButtonStyle.danger)
+    async def recusar(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.alvo_id:
+            await interaction.response.send_message("Essa troca não é direcionada a você.", ephemeral=True)
+            return
+
+        async with db_pool.acquire() as conn:
+            await conn.execute('UPDATE trocas SET status = "recusada" WHERE id = $1', self.trade_id)
+
+        self.disable_all_items()
+        embed = interaction.message.embeds[0]
+        embed.color = 0xE74C3C
+        embed.description = f"❌ Troca recusada por {interaction.user.mention}."
+        
+        await interaction.message.edit(embed=embed, view=self)
+        await interaction.response.send_message("A troca foi recusada com sucesso.", ephemeral=True)
+
+    def disable_all_items(self):
+        for item in self.children:
+            item.disabled = True
+
 # ---------- AmigosView ----------
 class AmigosView(View):
     def __init__(self):
@@ -782,37 +900,54 @@ class AmigosView(View):
         uid = str(interaction.user.id)
         personagens = list(set(dados["personagens"]))
         if not personagens:
-            await interaction.response.send_message("Você não tem personagens.", ephemeral=True)
+            await interaction.response.send_message("Você não tem personagens para trocar.", ephemeral=True)
             return
+            
         options = [discord.SelectOption(label=f"{nome} {PERSONAGENS_EMOJI.get(nome, '')}", value=nome) for nome in personagens[:25]]
-        select = Select(placeholder="Oferecer qual?", options=options)
+        select = Select(placeholder="Qual personagem você quer oferecer?", options=options)
+        
         async def select_cb(interaction_select: discord.Interaction):
             personagem_oferecido = select.values[0]
             membros = [m for m in interaction.guild.members if not m.bot and m.id != interaction.user.id]
             if not membros:
-                await interaction_select.response.send_message("Nenhum amigo no servidor.", ephemeral=True)
+                await interaction_select.response.send_message("Nenhum amigo encontrado no servidor.", ephemeral=True)
                 return
+                
             membro_opts = [discord.SelectOption(label=m.display_name, value=str(m.id)) for m in membros[:25]]
-            select_m = Select(placeholder="Escolha o amigo...", options=membro_opts)
+            select_m = Select(placeholder="Escolha o amigo para a troca...", options=membro_opts)
+            
             async def membro_cb(interaction_m: discord.Interaction):
                 alvo_id = select_m.values[0]
+                
+                # Checagem de segurança rápida para garantir que ainda tenha o personagem
+                check_dados = await get_user_data(uid)
+                if personagem_oferecido not in check_dados["personagens"]:
+                    await interaction_m.response.send_message("Você não possui mais esse personagem.", ephemeral=True)
+                    return
+
+                # Inserir pendente no banco de dados
                 async with db_pool.acquire() as conn:
-                    await conn.execute('''
+                    trade_id = await conn.fetchval('''
                         INSERT INTO trocas (solicitante_id, alvo_id, personagem_oferecido, timestamp)
                         VALUES ($1, $2, $3, $4)
+                        RETURNING id
                     ''', uid, alvo_id, personagem_oferecido, int(datetime.datetime.now(timezone.utc).timestamp()))
+                
                 alvo_user = await bot.fetch_user(int(alvo_id))
                 embed = discord.Embed(
                     title="🤝 Proposta de Troca",
-                    description=f"{interaction.user.mention} quer trocar **{personagem_oferecido}** com você!\nUse o comando `/trocas` para ver e responder.",
+                    description=f"{interaction.user.mention} quer trocar **{personagem_oferecido}** com você, {alvo_user.mention}!\n\nClique abaixo para responder.",
                     color=0x2ECC71
                 )
-                await interaction_m.response.send_message("✅ Pedido enviado! O amigo será notificado.", ephemeral=True)
-                await interaction.channel.send(content=alvo_user.mention, embed=embed)
+                view_troca = AceitarRecusarTrocaView(trade_id, uid, alvo_id, personagem_oferecido)
+                await interaction_m.response.send_message("✅ Pedido de troca enviado no canal!", ephemeral=True)
+                await interaction.channel.send(content=alvo_user.mention, embed=embed, view=view_troca)
+                
             select_m.callback = membro_cb
             view_m = View(timeout=60)
             view_m.add_item(select_m)
             await interaction_select.response.send_message("Selecione o amigo:", view=view_m, ephemeral=True)
+            
         select.callback = select_cb
         view = View(timeout=60)
         view.add_item(select)
@@ -1108,83 +1243,6 @@ class AdivinheModal(Modal, title="Adivinhe o Personagem"):
             await interaction.response.send_message(f"🎉 Correto! Você ganhou **{bonus}💗**!", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Errado! O personagem era **{self.nome_correto}**.", ephemeral=True)
-
-@bot.tree.command(name="trocas", description="Veja e responda às solicitações de troca pendentes")
-async def ver_trocas(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch('''
-            SELECT id, solicitante_id, personagem_oferecido, timestamp
-            FROM trocas
-            WHERE alvo_id = $1 AND status = 'pendente'
-            ORDER BY timestamp DESC
-        ''', uid)
-    if not rows:
-        await interaction.response.send_message("Nenhuma solicitação de troca pendente.", ephemeral=True)
-        return
-    embed = discord.Embed(title="📬 Solicitações de Troca", color=0x3498DB)
-    for row in rows:
-        solicitante = await bot.fetch_user(int(row['solicitante_id']))
-        embed.add_field(
-            name=f"De: {solicitante.display_name}",
-            value=f"Oferece: {row['personagem_oferecido']}\nID: {row['id']}",
-            inline=False
-        )
-    embed.set_footer(text="Use /respondertroca <id> aceitar ou recusar")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="respondertroca", description="Responda a uma solicitação de troca")
-async def responder_troca(interaction: discord.Interaction, id: int, acao: str):
-    uid = str(interaction.user.id)
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow('SELECT * FROM trocas WHERE id = $1 AND alvo_id = $2 AND status = "pendente"', id, uid)
-        if not row:
-            await interaction.response.send_message("Solicitação não encontrada ou já respondida.", ephemeral=True)
-            return
-        if acao.lower() == "recusar":
-            await conn.execute('UPDATE trocas SET status = "recusada" WHERE id = $1', id)
-            await interaction.response.send_message("❌ Troca recusada.", ephemeral=True)
-            return
-        elif acao.lower() == "aceitar":
-            dados_alvo = await get_user_data(uid)
-            personagens_alvo = list(set(dados_alvo["personagens"]))
-            if not personagens_alvo:
-                await interaction.response.send_message("Você não tem personagens para trocar.", ephemeral=True)
-                return
-            options = [discord.SelectOption(label=nome, value=nome) for nome in personagens_alvo[:25]]
-            select = Select(placeholder="Escolha o personagem que você dará", options=options)
-            async def select_cb(interaction_select: discord.Interaction):
-                personagem_dado = select.values[0]
-                solicitante_id = row['solicitante_id']
-                personagem_oferecido = row['personagem_oferecido']
-                dados_solicitante = await get_user_data(solicitante_id)
-                if personagem_oferecido not in dados_solicitante["personagens"]:
-                    await interaction_select.response.send_message("O solicitante não tem mais esse personagem.", ephemeral=True)
-                    return
-                dados_solicitante["personagens"].remove(personagem_oferecido)
-                dados_solicitante["personagens"].append(personagem_dado)
-                dados_alvo["personagens"].remove(personagem_dado)
-                dados_alvo["personagens"].append(personagem_oferecido)
-                registro = f"{interaction.user.name} deu **{personagem_dado}** e recebeu **{personagem_oferecido}** de <@{solicitante_id}>"
-                dados_solicitante.setdefault("historico_trocas", []).append(registro)
-                dados_alvo.setdefault("historico_trocas", []).append(registro)
-                dados_solicitante["missoes_diarias"]["trocas"] = dados_solicitante["missoes_diarias"].get("trocas", 0) + 1
-                dados_solicitante["missoes_semanais"]["trocas"] = dados_solicitante["missoes_semanais"].get("trocas", 0) + 1
-                dados_alvo["missoes_diarias"]["trocas"] = dados_alvo["missoes_diarias"].get("trocas", 0) + 1
-                dados_alvo["missoes_semanais"]["trocas"] = dados_alvo["missoes_semanais"].get("trocas", 0) + 1
-                await update_user_data(solicitante_id, dados_solicitante)
-                await update_user_data(uid, dados_alvo)
-                async with db_pool.acquire() as conn2:
-                    await conn2.execute('UPDATE trocas SET status = "concluida" WHERE id = $1', id)
-                await interaction_select.response.send_message(f"✅ Troca concluída! {registro}", ephemeral=False)
-                solicitante_user = await bot.fetch_user(int(solicitante_id))
-                await solicitante_user.send(f"✅ Sua troca com {interaction.user.display_name} foi concluída! Você recebeu **{personagem_dado}**.")
-            select.callback = select_cb
-            view = View(timeout=60)
-            view.add_item(select)
-            await interaction.response.send_message("Escolha o personagem que você dará:", view=view, ephemeral=True)
-        else:
-            await interaction.response.send_message("Ação inválida. Use 'aceitar' ou 'recusar'.", ephemeral=True)
 
 # ---------- Comandos de IA ----------
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
