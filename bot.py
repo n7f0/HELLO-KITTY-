@@ -21,10 +21,10 @@ ARQUIVO_IA = "ia_config.json"
 # =====================================================
 
 # Configurar Gemini (nova SDK)
-modelo_ia = None
+cliente_ia = None
+MODELO_IA = "gemini-2.0-flash"  # modelo mais recente e compatível
 if GEMINI_API_KEY:
     cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
-    modelo_ia = "gemini-1.5-flash"  # modelo correto
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -1062,7 +1062,7 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
     if not config.get(str(interaction.guild.id), False):
         await interaction.response.send_message("🌸 A IA está desativada neste servidor. Peça a um admin para usar /ativaria.", ephemeral=True)
         return
-    if not modelo_ia:
+    if not cliente_ia:
         await interaction.response.send_message("💔 A IA não está configurada (chave da API ausente).", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=False)
@@ -1071,7 +1071,7 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
         Você está no servidor do Discord "Hello Kitty Café", um joguinho de colecionar personagens.
         Responda de forma fofa, animada e ajude o jogador com dicas sobre o jogo (como conseguir corações, doces, fragmentos, trocar com amigos).
         Mensagem do jogador: {mensagem}"""
-        response = cliente_ia.models.generate_content(model=modelo_ia, contents=prompt)
+        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
         texto = response.text
         await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
     except Exception as e:
@@ -1080,7 +1080,7 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
 
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
 async def historinha(interaction: discord.Interaction):
-    if not modelo_ia:
+    if not cliente_ia:
         await interaction.response.send_message("💔 IA não disponível.", ephemeral=True)
         return
     dados = carregar_dados()
@@ -1092,7 +1092,7 @@ async def historinha(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         prompt = f"Crie uma historinha curta e fofa com os seguintes personagens: {', '.join(set(personagens))}. A Hello Kitty é a anfitriã do café."
-        response = cliente_ia.models.generate_content(model=modelo_ia, contents=prompt)
+        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
         await interaction.followup.send(f"📖 {response.text}")
     except Exception as e:
         print(f"Erro na historinha: {e}")
@@ -1215,7 +1215,7 @@ async def on_message(message):
     salvar_dados(dados)
 
     # --- RESPOSTA NATURAL DA IA ---
-    if not modelo_ia:
+    if not cliente_ia:
         await bot.process_commands(message)
         return
 
@@ -1238,7 +1238,7 @@ Você está em um chat do Discord no servidor "Hello Kitty Café", um joguinho d
 Converse naturalmente com os membros, dê dicas fofas sobre o jogo, e mantenha um tom animado.
 Responda em português, de forma curta e amigável.
 Mensagem recebida: {message.content}"""
-        response = cliente_ia.models.generate_content(model=modelo_ia, contents=prompt)
+        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
         texto = response.text
         if len(texto) > 2000:
             texto = texto[:1997] + "..."
