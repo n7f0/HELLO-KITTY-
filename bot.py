@@ -35,7 +35,7 @@ EFEITOS_DESC = {
     "dear_daniel": "+1💗 a cada 50 msgs",
     "my_melody": "10% de reembolsar 1💗 ao comprar",
     "kuromi": "+15% chance Épico+",
-    "pompompurin": "50% de não gastar 💗 ao comprar (ganha personagem de graça)",
+    "pompompurin": "50% de não gastar 💗 ao comprar",
     "cinnamoroll": "Troca 2 duplicatas por 1 novo (na turma)",
     "twin_stars": "+1💗 a cada 10 msgs",
     "keroppi": "+1 🍬 diário extra",
@@ -46,7 +46,7 @@ EFEITOS_DESC = {
     "hangyodon": "Reciclar duplicata = 3💗 (na turma)",
     "pekkle": "+5% chance Incomum+",
     "nene": "50% reembolso ao comprar, +5💗/msg, 50% frag extra, +3💗 a cada 5 msgs",
-    # Comuns (20)
+    # Comuns
     "spottie_dottie": "+1💗 a cada 15 msgs",
     "landry": "5% de duplicar amigo encontrado",
     "moppu": "3% de chance de reembolso ao comprar",
@@ -69,25 +69,19 @@ EFEITOS_DESC = {
     "mocha": "+1💗 a cada 60 msgs"
 }
 
-# ---------- Personagens (ordem por raridade, depois peso) ----------
+# ---------- Personagens ----------
 PERSONAGENS = []
-# Ultimate
-PERSONAGENS.append({"nome": "Nenê", "peso": 0, "raridade": "Ultimate", "efeito": "nene"})  # tratada separadamente
-# Mítico
+PERSONAGENS.append({"nome": "Nenê", "peso": 0, "raridade": "Ultimate", "efeito": "nene"})
 PERSONAGENS.append({"nome": "Hello Kitty", "peso": 1, "raridade": "Mítico", "efeito": "hello_kitty"})
-# Lendários
 PERSONAGENS.append({"nome": "Dear Daniel", "peso": 2, "raridade": "Lendário", "efeito": "dear_daniel"})
 PERSONAGENS.append({"nome": "My Melody", "peso": 5, "raridade": "Lendário", "efeito": "my_melody"})
 PERSONAGENS.append({"nome": "Kuromi", "peso": 5, "raridade": "Lendário", "efeito": "kuromi"})
-# Épicos
 PERSONAGENS.append({"nome": "Pompompurin", "peso": 10, "raridade": "Épico", "efeito": "pompompurin"})
 PERSONAGENS.append({"nome": "Cinnamoroll", "peso": 10, "raridade": "Épico", "efeito": "cinnamoroll"})
 PERSONAGENS.append({"nome": "Little Twin Stars", "peso": 20, "raridade": "Épico", "efeito": "twin_stars"})
-# Raros
 PERSONAGENS.append({"nome": "Keroppi", "peso": 200, "raridade": "Raro", "efeito": "keroppi"})
 PERSONAGENS.append({"nome": "Badtz-Maru", "peso": 200, "raridade": "Raro", "efeito": "badtz_maru"})
 PERSONAGENS.append({"nome": "Tuxedo Sam", "peso": 200, "raridade": "Raro", "efeito": "tuxedo_sam"})
-# Incomuns
 PERSONAGENS.append({"nome": "Pochacco", "peso": 2000, "raridade": "Incomum", "efeito": "pochacco"})
 PERSONAGENS.append({"nome": "Chococat", "peso": 2000, "raridade": "Incomum", "efeito": "chococat"})
 PERSONAGENS.append({"nome": "Hangyodon", "peso": 2000, "raridade": "Incomum", "efeito": "hangyodon"})
@@ -108,40 +102,26 @@ for i, nome in enumerate(COMUNS_NOMES):
     peso = peso_comum_base if i < 19 else 9991347 - (19 * peso_comum_base)
     PERSONAGENS.append({"nome": nome, "peso": peso, "raridade": "Comum", "efeito": COMUNS_EFEITOS[i]})
 
-# Verificação (Nenê não entra no peso total, pois chance independente)
 TOTAL_PESOS = sum(p["peso"] for p in PERSONAGENS if p["nome"] != "Nenê")
-assert TOTAL_PESOS == 10000000, f"Pesos: {TOTAL_PESOS}"
+assert TOTAL_PESOS == 10000000
 
-# ---------- Preços da Loja de Moedas ----------
 PRECO_MOEDAS = {
-    "Comum": 50,
-    "Incomum": 100,
-    "Raro": 250,
-    "Épico": 1000,
-    "Lendário": 5000,
-    "Mítico": 20000,
-    "Ultimate": 100000
+    "Comum": 50, "Incomum": 100, "Raro": 250,
+    "Épico": 1000, "Lendário": 5000, "Mítico": 20000, "Ultimate": 100000
 }
 
 # ---------- Funções de efeito ----------
 def tem_efeito(uid, dados, efeito_nome):
-    if uid not in dados:
-        return False
+    if uid not in dados: return False
     for nome in set(dados[uid]["personagens"]):
-        if nome == "Nenê" and efeito_nome == "nene":
-            return True
+        if nome == "Nenê" and efeito_nome == "nene": return True
         for p in PERSONAGENS:
-            if p["nome"] == nome and p["efeito"] == efeito_nome:
-                return True
+            if p["nome"] == nome and p["efeito"] == efeito_nome: return True
     return False
 
-def chance_reembolso(uid, dados):
-    """Chance de não gastar coração ao comprar personagem."""
-    if tem_efeito(uid, dados, "pompompurin") and random.random() < 0.5:
-        return True
-    if tem_efeito(uid, dados, "minna_tabo") and random.random() < 0.10:
-        return True
-    # Reembolso (ganha de volta o coração) - tratado na compra
+def chance_nao_gastar(uid, dados):
+    if tem_efeito(uid, dados, "pompompurin") and random.random() < 0.5: return True
+    if tem_efeito(uid, dados, "minna_tabo") and random.random() < 0.10: return True
     return False
 
 def calcular_coracoes_msg(uid, dados, msg_count):
@@ -154,11 +134,9 @@ def calcular_coracoes_msg(uid, dados, msg_count):
     return base
 
 def sortear_personagem(uid, dados, cupom_raridade=False):
-    """Sorteio normal; se cupom_raridade, só Raro+."""
     if cupom_raridade:
         pool = [p for p in PERSONAGENS if p["raridade"] in ("Raro", "Épico", "Lendário", "Mítico")]
         return random.choice(pool)
-    # Aplica modificadores
     multiplicadores = {}
     if tem_efeito(uid, dados, "kuromi"):
         for p in PERSONAGENS:
@@ -172,11 +150,9 @@ def sortear_personagem(uid, dados, cupom_raridade=False):
         for p in PERSONAGENS:
             if p["raridade"] in ("Épico", "Lendário", "Mítico"):
                 multiplicadores[p["nome"]] = multiplicadores.get(p["nome"], 1.0) * 1.02
-
     pesos = []
-    for p in PERSONAGENS:
-        if p["nome"] == "Nenê":  # Nenê não está na roleta normal
-            continue
+    chars_validos = [p for p in PERSONAGENS if p["nome"] != "Nenê"]
+    for p in chars_validos:
         w = p["peso"]
         if p["nome"] in multiplicadores:
             w = int(w * multiplicadores[p["nome"]])
@@ -184,11 +160,25 @@ def sortear_personagem(uid, dados, cupom_raridade=False):
     total = sum(pesos)
     rolagem = random.randint(1, total)
     acumulado = 0
-    for i, p in enumerate([x for x in PERSONAGENS if x["nome"] != "Nenê"]):
+    for i, p in enumerate(chars_validos):
         acumulado += pesos[i]
         if rolagem <= acumulado:
             return p
-    return PERSONAGENS[0]
+    return chars_validos[0]
+
+# ---------- Inicialização ----------
+def novo_jogador():
+    return {
+        "coracoes": 5,  # começa com 5 corações
+        "doces": 0,
+        "personagens": [],
+        "fragmentos": 0,
+        "moedas": 0,
+        "msg_count": 0,
+        "coracoes_ganhos": 0,
+        "ultimo_doce": 0,
+        "historico_trocas": []
+    }
 
 # =================== VIEW PRINCIPAL ===================
 class MenuPrincipal(View):
@@ -202,22 +192,18 @@ class MenuPrincipal(View):
         if uid not in dados:
             dados[uid] = novo_jogador()
         if dados[uid]["coracoes"] < 1:
-            await interaction.response.send_message("💔 Você não tem corações!", ephemeral=True)
+            await interaction.response.send_message("💔 Você não tem corações! Ganhe conversando ou converta doces na loja.", ephemeral=True)
             return
 
-        # Verifica se ganha de graça (Pompompurin/Minna no Tabo)
-        gratis = chance_reembolso(uid, dados)
+        gratis = chance_nao_gastar(uid, dados)
         if not gratis:
             dados[uid]["coracoes"] -= 1
-        else:
-            pass  # não gasta
 
-        # Nenê (chance independente)
+        # Nenê (independente)
         if random.random() < 1e-11:
-            personagem = {"nome": "Nenê", "raridade": "Ultimate", "efeito": "nene"}
             dados[uid]["personagens"].append("Nenê")
             salvar_dados(dados)
-            await interaction.response.send_message("💫 IMPOSSÍVEL! **Nenê** apareceu!", ephemeral=False)
+            await interaction.response.send_message("💫 IMPOSSÍVEL! **Nenê** apareceu no café!", ephemeral=False)
             return
 
         personagem = sortear_personagem(uid, dados)
@@ -234,15 +220,14 @@ class MenuPrincipal(View):
         if personagem["nome"] == "Hello Kitty":
             frags = random.randint(1, 5)
             dados[uid]["fragmentos"] += frags
-        # Fragmentos extra por efeitos
+
+        # Efeitos de fragmentos extras
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.10: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
-        if tem_efeito(uid, dados, "george") and dados[uid]["msg_count"] % 100 == 0: dados[uid]["fragmentos"] += 1
-        if tem_efeito(uid, dados, "sasa") and dados[uid]["msg_count"] % 50 == 0: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados[uid]["fragmentos"] += 1
 
-        # Reembolso (My Melody, HK, Nenê, etc.)
+        # Reembolso
         reembolso = False
         if tem_efeito(uid, dados, "my_melody") and random.random() < 0.10: reembolso = True
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.20: reembolso = True
@@ -250,9 +235,8 @@ class MenuPrincipal(View):
         if tem_efeito(uid, dados, "moppu") and random.random() < 0.03: reembolso = True
         if tem_efeito(uid, dados, "lulu") and random.random() < 0.01: reembolso = True
         if reembolso and not gratis:
-            dados[uid]["coracoes"] += 1  # devolve o coração gasto
+            dados[uid]["coracoes"] += 1
 
-        # Badtz-Maru: +5💗 ao comprar
         if tem_efeito(uid, dados, "badtz_maru"): dados[uid]["coracoes"] += 5
         if tem_efeito(uid, dados, "sugar") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados[uid]["coracoes"] += 1
@@ -260,63 +244,41 @@ class MenuPrincipal(View):
         salvar_dados(dados)
 
         msg = ""
-        if gratis: msg += "\n🍮 Pompompurin/Minna no Tabo fez você não gastar o 💗!"
+        if gratis: msg += "\n🍮 Você não gastou o 💗!"
         if duplicar: msg += "\n🐱 Amigo duplicado!"
-        if reembolso: msg += "\n💖 Você recebeu o coração de volta!"
+        if reembolso: msg += "\n💖 Coração devolvido!"
 
         embed = discord.Embed(
             title="🎁 Novo Amigo no Café!",
             description=f"**{personagem['nome']}** ({personagem['raridade']}){msg}",
             color=discord.Color.from_rgb(255, 182, 193)
         )
-        embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Fragmentos Hello: {dados[uid]['fragmentos']} | Moedas: {dados[uid].get('moedas', 0)}")
+        embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | Moedas: {dados[uid].get('moedas', 0)}")
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
-    @discord.ui.button(label="Doces Diários 🍬", style=discord.ButtonStyle.secondary, custom_id="doces_diarios")
-    async def doces_diarios(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="Loja do Café 🛍️", style=discord.ButtonStyle.primary, custom_id="loja_cafe")
+    async def loja(self, interaction: discord.Interaction, button: Button):
         dados = carregar_dados()
         uid = str(interaction.user.id)
         if uid not in dados:
             dados[uid] = novo_jogador()
-        agora = datetime.datetime.utcnow().timestamp()
-        ultimo = dados[uid].get("ultimo_doce", 0)
-        if agora - ultimo < 86400:
-            falta = 86400 - (agora - ultimo)
-            horas = int(falta // 3600)
-            minutos = int((falta % 3600) // 60)
-            await interaction.response.send_message(f"⏰ Você já resgatou hoje! Volte em {horas}h {minutos}m.", ephemeral=True)
-            return
-        # Quantidade aleatória 3-8 + bônus Keroppi
-        qtd = random.randint(3, 8)
-        if tem_efeito(uid, dados, "keroppi"): qtd += 1
-        dados[uid]["doces"] = dados[uid].get("doces", 0) + qtd
-        dados[uid]["ultimo_doce"] = agora
-        salvar_dados(dados)
-        await interaction.response.send_message(f"🍬 Você ganhou **{qtd} Doces**! Total: {dados[uid]['doces']} doces.", ephemeral=False)
-
-    @discord.ui.button(label="Minha Turma 👥", style=discord.ButtonStyle.primary, custom_id="turma")
-    async def turma(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if uid not in dados or not dados[uid]["personagens"]:
-            await interaction.response.send_message("👥 Sua turma está vazia!", ephemeral=True)
-            return
-        contagem = {}
-        for nome in dados[uid]["personagens"]:
-            contagem[nome] = contagem.get(nome, 0) + 1
-        desc = ""
-        for nome, qtd in contagem.items():
-            efeito = next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None)
-            if nome == "Nenê": efeito = "nene"
-            desc_efeito = EFEITOS_DESC.get(efeito, "—")
-            desc += f"{nome} ×{qtd}  [{desc_efeito}]\n"
-        embed = discord.Embed(title="👥 Turma do Hello Kitty Café", description=desc, color=discord.Color.from_rgb(255, 105, 180))
-        embed.set_footer(text=f"Total: {len(dados[uid]['personagens'])} | Frag. HK: {dados[uid]['fragmentos']} | Moedas: {dados[uid].get('moedas', 0)}")
-        await interaction.response.send_message(embed=embed, view=TurmaAcoesView(uid), ephemeral=True)
+            salvar_dados(dados)
+        embed = discord.Embed(
+            title="🛍️ Loja do Hello Kitty Café",
+            description=(
+                f"💗 {dados[uid]['coracoes']} | 🍬 {dados[uid].get('doces',0)} | 🪙 {dados[uid].get('moedas',0)}\n"
+                f"Fragmentos Hello: {dados[uid]['fragmentos']}\n\n"
+                "⚡ Converter 100🍬 → 4💗\n"
+                "🍀 Cupom da Sorte (200💗+300🍬) → Personagem Raro+\n"
+                "👑 Resgatar Hello Kitty (100 fragmentos)\n"
+                "🪙 Loja de Moedas"
+            ),
+            color=discord.Color.gold()
+        )
+        await interaction.response.send_message(embed=embed, view=LojaCafeView(uid), ephemeral=True)
 
     @discord.ui.button(label="Álbum de Amigos 📒", style=discord.ButtonStyle.secondary, custom_id="album")
     async def album(self, interaction: discord.Interaction, button: Button):
-        # Ordenado: Ultimate, Mítico, Lendário, Épico, Raro, Incomum, Comum
         ordem = {"Ultimate":0, "Mítico":1, "Lendário":2, "Épico":3, "Raro":4, "Incomum":5, "Comum":6}
         chars = sorted(PERSONAGENS, key=lambda x: ordem.get(x["raridade"], 99))
         pages = []
@@ -332,49 +294,15 @@ class MenuPrincipal(View):
         if pages:
             await interaction.response.send_message(embed=pages[0], view=PaginaView(pages, 0), ephemeral=True)
 
-    @discord.ui.button(label="Loja do Café 🛍️", style=discord.ButtonStyle.primary, custom_id="loja_cafe")
-    async def loja(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if uid not in dados:
-            dados[uid] = novo_jogador()
-            salvar_dados(dados)
-        embed = discord.Embed(
-            title="🛍️ Loja do Hello Kitty Café",
-            description=(
-                f"**Seu saldo:** 💗 {dados[uid]['coracoes']} | 🍬 {dados[uid].get('doces',0)} | 🪙 {dados[uid].get('moedas',0)}\n"
-                f"**Fragmentos Hello Kitty:** {dados[uid]['fragmentos']}\n\n"
-                "⚡ Converter 100🍬 → 4💗\n"
-                "🍀 Cupom da Sorte (200💗 + 300🍬) → Personagem Raro+\n"
-                "👑 Resgatar Hello Kitty (100 fragmentos)\n"
-                "🪙 Loja de Moedas (compre personagens específicos)"
-            ),
-            color=discord.Color.gold()
-        )
-        await interaction.response.send_message(embed=embed, view=LojaCafeView(uid), ephemeral=True)
-
     @discord.ui.button(label="Amigos 🤝", style=discord.ButtonStyle.primary, custom_id="amigos_menu")
     async def amigos_menu(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("Escolha uma opção:", view=AmigosView(), ephemeral=True)
 
-    @discord.ui.button(label="Ajuda ❓", style=discord.ButtonStyle.danger, custom_id="ajuda_cafe")
-    async def ajuda(self, interaction: discord.Interaction, button: Button):
-        embed = discord.Embed(
-            title="🌸 Hello Kitty Café – Como Jogar",
-            description=(
-                "🎁 Gaste 1💗 para receber um personagem aleatório.\n"
-                "💗 Converse no servidor para ganhar corações.\n"
-                "🍬 Resgate doces diários (3-8). Junte 100 para 4💗.\n"
-                "🪙 Venda duplicatas na Turma por moedas e compre personagens na Loja de Moedas.\n"
-                "👑 Hello Kitty (0,00001%) dá de 1 a 5 fragmentos. 100 frags = uma Hello Kitty.\n"
-                "💫 Nenê é Ultimate (0,000000001%)!"
-            ),
-            color=discord.Color.from_rgb(255, 192, 203)
-        )
-        embed.set_image(url="attachment://Hello_kitty.png")
-        await interaction.response.send_message(embed=embed, file=discord.File("Hello_kitty.png"), ephemeral=True)
+    @discord.ui.button(label="Tutorial/Ajuda ❔", style=discord.ButtonStyle.secondary, custom_id="tutorial_ajuda")
+    async def tutorial_ajuda(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_message("O que você gostaria de ver?", view=TutorialAjudaView(), ephemeral=True)
 
-# ---------- Submenus e Views ----------
+# ---------- Paginação ----------
 class PaginaView(View):
     def __init__(self, pages, current):
         super().__init__(timeout=60)
@@ -398,87 +326,33 @@ class PaginaView(View):
         self.update_buttons()
         await interaction.response.edit_message(embed=self.pages[self.current], view=self)
 
-class TurmaAcoesView(View):
-    def __init__(self, uid):
-        super().__init__(timeout=60)
-        self.uid = uid
-
-    @discord.ui.button(label="Vender Duplicata 💰", style=discord.ButtonStyle.secondary)
-    async def vender(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        contagem = {}
-        for nome in dados[uid]["personagens"]:
-            contagem[nome] = contagem.get(nome, 0) + 1
-        dups = [nome for nome, qtd in contagem.items() if qtd > 1]
-        if not dups:
-            await interaction.response.send_message("Sem duplicatas para vender.", ephemeral=True)
-            return
-        options = [discord.SelectOption(label=f"{nome} (x{contagem[nome]})", value=nome) for nome in dups[:25]]
-        select = Select(placeholder="Escolha qual vender...", options=options)
-        async def callback(interaction_select: discord.Interaction):
-            nome = select.values[0]
-            # Determina raridade para definir valor em moedas
-            raridade = next((p["raridade"] for p in PERSONAGENS if p["nome"] == nome), "Comum")
-            if nome == "Nenê": raridade = "Ultimate"
-            valor = PRECO_MOEDAS.get(raridade, 5)
-            dados[uid]["personagens"].remove(nome)
-            dados[uid]["moedas"] = dados[uid].get("moedas", 0) + valor
-            salvar_dados(dados)
-            await interaction_select.response.send_message(f"💰 Vendeu **{nome}** por {valor} moedas.", ephemeral=False)
-        select.callback = callback
-        view = View(timeout=60)
-        view.add_item(select)
-        await interaction.response.send_message("Selecione a duplicata para vender:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="Trocar 2 duplicatas (Cinnamoroll) 🔄", style=discord.ButtonStyle.primary)
-    async def trocar_cinnamoroll(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if not tem_efeito(uid, dados, "cinnamoroll"):
-            await interaction.response.send_message("Precisa do Cinnamoroll.", ephemeral=True)
-            return
-        contagem = {}
-        for nome in dados[uid]["personagens"]:
-            contagem[nome] = contagem.get(nome, 0) + 1
-        trocaveis = [nome for nome, qtd in contagem.items() if qtd >= 2]
-        if not trocaveis:
-            await interaction.response.send_message("Sem 2 cópias.", ephemeral=True)
-            return
-        nome = trocaveis[0]
-        for _ in range(2):
-            dados[uid]["personagens"].remove(nome)
-        novo = sortear_personagem(uid, dados)
-        dados[uid]["personagens"].append(novo["nome"])
-        salvar_dados(dados)
-        await interaction.response.send_message(f"🔄 2× {nome} → {novo['nome']}!", ephemeral=True)
-
-    @discord.ui.button(label="Reciclar duplicata (Hangyodon) ♻️", style=discord.ButtonStyle.danger)
-    async def reciclar(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if not tem_efeito(uid, dados, "hangyodon"):
-            await interaction.response.send_message("Precisa do Hangyodon.", ephemeral=True)
-            return
-        contagem = {}
-        for nome in dados[uid]["personagens"]:
-            contagem[nome] = contagem.get(nome, 0) + 1
-        dups = [nome for nome, qtd in contagem.items() if qtd > 1]
-        if not dups:
-            await interaction.response.send_message("Sem duplicatas.", ephemeral=True)
-            return
-        nome = dups[0]
-        dados[uid]["personagens"].remove(nome)
-        dados[uid]["coracoes"] += 3
-        salvar_dados(dados)
-        await interaction.response.send_message(f"♻️ {nome} → +3💗", ephemeral=True)
-
+# ---------- Loja ----------
 class LojaCafeView(View):
     def __init__(self, uid):
         super().__init__(timeout=60)
         self.uid = uid
 
-    @discord.ui.button(label="Converter 100🍬 → 4💗", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Doces Diários 🍬", style=discord.ButtonStyle.success)
+    async def doces_diarios(self, interaction: discord.Interaction, button: Button):
+        dados = carregar_dados()
+        uid = str(interaction.user.id)
+        if uid not in dados: dados[uid] = novo_jogador()
+        agora = datetime.datetime.utcnow().timestamp()
+        ultimo = dados[uid].get("ultimo_doce", 0)
+        if agora - ultimo < 86400:
+            falta = 86400 - (agora - ultimo)
+            horas = int(falta // 3600)
+            minutos = int((falta % 3600) // 60)
+            await interaction.response.send_message(f"⏰ Volte em {horas}h {minutos}m.", ephemeral=True)
+            return
+        qtd = random.randint(3, 8)
+        if tem_efeito(uid, dados, "keroppi"): qtd += 1
+        dados[uid]["doces"] = dados[uid].get("doces", 0) + qtd
+        dados[uid]["ultimo_doce"] = agora
+        salvar_dados(dados)
+        await interaction.response.send_message(f"🍬 Você ganhou **{qtd} Doces**! Total: {dados[uid]['doces']}", ephemeral=False)
+
+    @discord.ui.button(label="Converter 100🍬 → 4💗", style=discord.ButtonStyle.primary)
     async def converter(self, interaction: discord.Interaction, button: Button):
         dados = carregar_dados()
         uid = str(interaction.user.id)
@@ -488,7 +362,7 @@ class LojaCafeView(View):
         dados[uid]["doces"] -= 100
         dados[uid]["coracoes"] += 4
         salvar_dados(dados)
-        await interaction.response.send_message("🍬 100 doces convertidos em 4💗!", ephemeral=True)
+        await interaction.response.send_message("🍬 100 doces → 4💗!", ephemeral=True)
 
     @discord.ui.button(label="Cupom da Sorte (200💗+300🍬) 🍀", style=discord.ButtonStyle.primary)
     async def cupom(self, interaction: discord.Interaction, button: Button):
@@ -502,7 +376,7 @@ class LojaCafeView(View):
         personagem = sortear_personagem(uid, dados, cupom_raridade=True)
         dados[uid]["personagens"].append(personagem["nome"])
         salvar_dados(dados)
-        await interaction.response.send_message(f"🍀 Cupom usado! Você ganhou **{personagem['nome']}** ({personagem['raridade']})", ephemeral=False)
+        await interaction.response.send_message(f"🍀 Cupom usado! **{personagem['nome']}** ({personagem['raridade']})", ephemeral=False)
 
     @discord.ui.button(label="Resgatar Hello Kitty (100 frags) 👑", style=discord.ButtonStyle.danger)
     async def resgatar(self, interaction: discord.Interaction, button: Button):
@@ -513,7 +387,6 @@ class LojaCafeView(View):
             return
         dados[uid]["fragmentos"] -= 100
         dados[uid]["personagens"].append("Hello Kitty")
-        # Bonus fragmentos ao resgatar (1-5)
         bonus = random.randint(1,5)
         dados[uid]["fragmentos"] += bonus
         salvar_dados(dados)
@@ -526,9 +399,8 @@ class LojaCafeView(View):
         embed = discord.Embed(
             title="🪙 Loja de Moedas",
             description=(
-                "Compre personagens específicos com moedas:\n"
-                "Comum: 50🪙\nIncomum: 100🪙\nRaro: 250🪙\nÉpico: 1.000🪙\n"
-                "Lendário: 5.000🪙\nMítico: 20.000🪙\nUltimate: 100.000🪙\n\n"
+                "Comum: 50🪙 | Incomum: 100🪙 | Raro: 250🪙 | Épico: 1.000🪙\n"
+                "Lendário: 5.000🪙 | Mítico: 20.000🪙 | Ultimate: 100.000🪙\n\n"
                 f"Seu saldo: {dados[uid].get('moedas', 0)}🪙"
             ),
             color=discord.Color.teal()
@@ -540,22 +412,18 @@ class LojaMoedasView(View):
         super().__init__(timeout=60)
         self.uid = uid
 
-    @discord.ui.button(label="Comprar por Nome", style=discord.ButtonStyle.primary)
-    async def comprar_nome(self, interaction: discord.Interaction, button: Button):
-        # Lista de personagens que podem ser comprados (todos)
+    @discord.ui.button(label="Comprar Personagem Específico", style=discord.ButtonStyle.primary)
+    async def comprar_especifico(self, interaction: discord.Interaction, button: Button):
         chars = [p for p in PERSONAGENS]
         options = [discord.SelectOption(label=f"{p['nome']} ({p['raridade']}) {PRECO_MOEDAS[p['raridade']]}🪙", value=p["nome"]) for p in chars[:25]]
-        select = Select(placeholder="Escolha o personagem...", options=options)
+        select = Select(placeholder="Escolha...", options=options)
         async def callback(interaction_select: discord.Interaction):
             nome = select.values[0]
             dados = carregar_dados()
             uid = str(interaction_select.user.id)
             p = next((p for p in PERSONAGENS if p["nome"] == nome), None)
-            if not p:
-                await interaction_select.response.send_message("Personagem não encontrado.", ephemeral=True)
-                return
-            raridade = p["raridade"]
-            preco = PRECO_MOEDAS[raridade]
+            if not p: return
+            preco = PRECO_MOEDAS[p["raridade"]]
             if dados[uid].get("moedas", 0) < preco:
                 await interaction_select.response.send_message("Moedas insuficientes.", ephemeral=True)
                 return
@@ -566,12 +434,31 @@ class LojaMoedasView(View):
         select.callback = callback
         view = View(timeout=60)
         view.add_item(select)
-        await interaction.response.send_message("Escolha o personagem que deseja comprar:", view=view, ephemeral=True)
+        await interaction.response.send_message("Escolha o personagem:", view=view, ephemeral=True)
 
-# View de Amigos
+# ---------- Amigos ----------
 class AmigosView(View):
     def __init__(self):
         super().__init__(timeout=60)
+
+    @discord.ui.button(label="Minha Turma 👥", style=discord.ButtonStyle.primary)
+    async def minha_turma(self, interaction: discord.Interaction, button: Button):
+        dados = carregar_dados()
+        uid = str(interaction.user.id)
+        if uid not in dados or not dados[uid]["personagens"]:
+            await interaction.response.send_message("Sua turma está vazia!", ephemeral=True)
+            return
+        contagem = {}
+        for nome in dados[uid]["personagens"]:
+            contagem[nome] = contagem.get(nome, 0) + 1
+        desc = ""
+        for nome, qtd in contagem.items():
+            efeito = next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None)
+            if nome == "Nenê": efeito = "nene"
+            desc += f"{nome} ×{qtd}  [{EFEITOS_DESC.get(efeito, '—')}]\n"
+        embed = discord.Embed(title="👥 Turma do Hello Kitty Café", description=desc, color=discord.Color.from_rgb(255, 105, 180))
+        embed.set_footer(text=f"Total: {len(dados[uid]['personagens'])} | Frag. HK: {dados[uid]['fragmentos']} | Moedas: {dados[uid].get('moedas', 0)}")
+        await interaction.response.send_message(embed=embed, view=TurmaAcoesView(uid), ephemeral=True)
 
     @discord.ui.button(label="Trocar com Amigo 🤝", style=discord.ButtonStyle.success)
     async def trocar(self, interaction: discord.Interaction, button: Button):
@@ -579,23 +466,21 @@ class AmigosView(View):
         uid = str(interaction.user.id)
         personagens = list(set(dados[uid]["personagens"]))
         if not personagens:
-            await interaction.response.send_message("Você não tem personagens para trocar.", ephemeral=True)
+            await interaction.response.send_message("Você não tem personagens.", ephemeral=True)
             return
         options = [discord.SelectOption(label=nome, value=nome) for nome in personagens[:25]]
-        select = Select(placeholder="Qual personagem oferecer?", options=options)
+        select = Select(placeholder="Oferecer qual?", options=options)
         async def select_cb(interaction_select: discord.Interaction):
             personagem_oferecido = select.values[0]
-            # Lista de membros do servidor (não bots, não o próprio)
             membros = [m for m in interaction.guild.members if not m.bot and m.id != interaction.user.id]
             if not membros:
-                await interaction_select.response.send_message("Nenhum amigo disponível.", ephemeral=True)
+                await interaction_select.response.send_message("Nenhum amigo no servidor.", ephemeral=True)
                 return
             membro_opts = [discord.SelectOption(label=m.display_name, value=str(m.id)) for m in membros[:25]]
             select_m = Select(placeholder="Escolha o amigo...", options=membro_opts)
             async def membro_cb(interaction_m: discord.Interaction):
                 alvo_id = select_m.values[0]
                 alvo_user = await bot.fetch_user(int(alvo_id))
-                # Salva pedido
                 trocas_pendentes[uid] = {"alvo": alvo_id, "personagem": personagem_oferecido}
                 embed = discord.Embed(title="🤝 Proposta de Troca", description=f"{interaction.user.mention} quer trocar **{personagem_oferecido}** com você!", color=discord.Color.green())
                 view = AceitarRecusarView(uid, alvo_id, personagem_oferecido)
@@ -618,11 +503,127 @@ class AmigosView(View):
         if not historico:
             await interaction.response.send_message("Nenhuma troca realizada.", ephemeral=True)
             return
-        msg = "\n".join(historico[-10:])  # últimas 10
+        msg = "\n".join(historico[-10:])
         embed = discord.Embed(title="📜 Histórico de Trocas", description=msg, color=discord.Color.light_grey())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# View de Aceitar/Recusar troca (igual antes, mas registra no histórico)
+class TurmaAcoesView(View):
+    def __init__(self, uid):
+        super().__init__(timeout=60)
+        self.uid = uid
+
+    @discord.ui.button(label="Vender Duplicata 💰", style=discord.ButtonStyle.secondary)
+    async def vender(self, interaction: discord.Interaction, button: Button):
+        dados = carregar_dados()
+        uid = str(interaction.user.id)
+        contagem = {}
+        for nome in dados[uid]["personagens"]:
+            contagem[nome] = contagem.get(nome, 0) + 1
+        dups = [nome for nome, qtd in contagem.items() if qtd > 1]
+        if not dups:
+            await interaction.response.send_message("Sem duplicatas.", ephemeral=True)
+            return
+        options = [discord.SelectOption(label=f"{nome} (x{contagem[nome]})", value=nome) for nome in dups[:25]]
+        select = Select(placeholder="Qual vender?", options=options)
+        async def callback(interaction_select: discord.Interaction):
+            nome = select.values[0]
+            raridade = next((p["raridade"] for p in PERSONAGENS if p["nome"] == nome), "Comum")
+            if nome == "Nenê": raridade = "Ultimate"
+            valor = PRECO_MOEDAS.get(raridade, 5)
+            dados[uid]["personagens"].remove(nome)
+            dados[uid]["moedas"] = dados[uid].get("moedas", 0) + valor
+            salvar_dados(dados)
+            await interaction_select.response.send_message(f"💰 Vendeu **{nome}** por {valor} moedas.", ephemeral=False)
+        select.callback = callback
+        view = View(timeout=60)
+        view.add_item(select)
+        await interaction.response.send_message("Selecione a duplicata:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Cinnamoroll: Trocar 2 duplicatas 🔄", style=discord.ButtonStyle.primary)
+    async def cinnamoroll(self, interaction: discord.Interaction, button: Button):
+        dados = carregar_dados()
+        uid = str(interaction.user.id)
+        if not tem_efeito(uid, dados, "cinnamoroll"):
+            await interaction.response.send_message("Precisa do Cinnamoroll.", ephemeral=True)
+            return
+        contagem = {}
+        for nome in dados[uid]["personagens"]: contagem[nome] = contagem.get(nome, 0) + 1
+        trocaveis = [nome for nome, qtd in contagem.items() if qtd >= 2]
+        if not trocaveis:
+            await interaction.response.send_message("Sem 2 cópias.", ephemeral=True)
+            return
+        nome = trocaveis[0]
+        for _ in range(2): dados[uid]["personagens"].remove(nome)
+        novo = sortear_personagem(uid, dados)
+        dados[uid]["personagens"].append(novo["nome"])
+        salvar_dados(dados)
+        await interaction.response.send_message(f"🔄 2× {nome} → {novo['nome']}!", ephemeral=True)
+
+    @discord.ui.button(label="Hangyodon: Reciclar duplicata ♻️", style=discord.ButtonStyle.danger)
+    async def hangyodon(self, interaction: discord.Interaction, button: Button):
+        dados = carregar_dados()
+        uid = str(interaction.user.id)
+        if not tem_efeito(uid, dados, "hangyodon"):
+            await interaction.response.send_message("Precisa do Hangyodon.", ephemeral=True)
+            return
+        contagem = {}
+        for nome in dados[uid]["personagens"]: contagem[nome] = contagem.get(nome, 0) + 1
+        dups = [nome for nome, qtd in contagem.items() if qtd > 1]
+        if not dups:
+            await interaction.response.send_message("Sem duplicatas.", ephemeral=True)
+            return
+        nome = dups[0]
+        dados[uid]["personagens"].remove(nome)
+        dados[uid]["coracoes"] += 3
+        salvar_dados(dados)
+        await interaction.response.send_message(f"♻️ {nome} → +3💗", ephemeral=True)
+
+# ---------- Tutorial/Ajuda ----------
+class TutorialAjudaView(View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="Tutorial 📘", style=discord.ButtonStyle.primary)
+    async def tutorial(self, interaction: discord.Interaction, button: Button):
+        embed = discord.Embed(
+            title="📘 Tutorial do Hello Kitty Café",
+            description=(
+                "**Bem-vindo(a)!** Aqui você monta sua turma de amigos da Sanrio.\n\n"
+                "💗 **Corações:** comece com 5. Use 1💗 no botão 'Comprar Personagem' para receber um amigo aleatório. "
+                "Ganhe mais corações conversando no servidor.\n\n"
+                "🍬 **Doces:** resgate de 3 a 8 doces uma vez por dia na Loja. Junte 100 doces para converter em 4💗.\n\n"
+                "🪙 **Moedas:** venda personagens duplicados na sua Turma (dentro de Amigos) para ganhar moedas. "
+                "Use moedas na Loja de Moedas para comprar personagens específicos.\n\n"
+                "🍀 **Cupom da Sorte:** na Loja, gaste 200💗 + 300🍬 para garantir um personagem Raro ou superior.\n\n"
+                "👑 **Hello Kitty:** extremamente rara! Ao encontrá-la, você recebe de 1 a 5 fragmentos. "
+                "Junte 100 fragmentos para resgatar uma Hello Kitty extra.\n\n"
+                "💫 **Nenê:** a Ultimate, chance quase impossível (0,000000001%).\n\n"
+                "🤝 **Amigos:** veja sua turma, troque personagens com outros membros e consulte o histórico de trocas."
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_image(url="attachment://Hello_kitty.png")
+        await interaction.response.send_message(embed=embed, file=discord.File("Hello_kitty.png"), ephemeral=True)
+
+    @discord.ui.button(label="Ajuda ❓", style=discord.ButtonStyle.secondary)
+    async def ajuda(self, interaction: discord.Interaction, button: Button):
+        embed = discord.Embed(
+            title="🌸 Ajuda Rápida",
+            description=(
+                "• Ganhe 💗 conversando no chat.\n"
+                "• Doces diários na Loja (1 vez por dia).\n"
+                "• 100🍬 = 4💗 (Loja).\n"
+                "• Venda duplicatas na Turma por 🪙.\n"
+                "• Use 🪙 para comprar personagens específicos.\n"
+                "• Cupom da Sorte: 200💗+300🍬.\n"
+                "• Hello Kitty: 100 fragmentos para resgate.\n"
+                "• Troque com amigos no menu Amigos."
+            ),
+            color=discord.Color.from_rgb(255, 192, 203)
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ---------- Aceitar/Recusar troca ----------
 class AceitarRecusarView(View):
     def __init__(self, solicitante_id, alvo_id, personagem_oferecido):
         super().__init__(timeout=120)
@@ -641,17 +642,16 @@ class AceitarRecusarView(View):
             return
         personagens_alvo = list(set(dados[self.alvo_id]["personagens"]))
         if not personagens_alvo:
-            await interaction.response.send_message("Você não tem personagens para oferecer.", ephemeral=True)
+            await interaction.response.send_message("Você não tem personagens.", ephemeral=True)
             return
         options = [discord.SelectOption(label=nome, value=nome) for nome in personagens_alvo[:25]]
-        select = Select(placeholder="Escolha um personagem seu...", options=options)
+        select = Select(placeholder="Oferecer qual?", options=options)
         async def callback(interaction_select: discord.Interaction):
             personagem_alvo = select.values[0]
             dados[self.solicitante_id]["personagens"].remove(self.personagem_oferecido)
             dados[self.alvo_id]["personagens"].remove(personagem_alvo)
             dados[self.solicitante_id]["personagens"].append(personagem_alvo)
             dados[self.alvo_id]["personagens"].append(self.personagem_oferecido)
-            # Histórico
             registro = f"{interaction.user.name} deu **{personagem_alvo}** e recebeu **{self.personagem_oferecido}** de <@{self.solicitante_id}>"
             dados[self.solicitante_id].setdefault("historico_trocas", []).append(registro)
             dados[self.alvo_id].setdefault("historico_trocas", []).append(registro)
@@ -676,30 +676,16 @@ class AceitarRecusarView(View):
         await interaction.response.send_message("❌ Troca recusada.", ephemeral=True)
 
     def disable_all_items(self):
-        for item in self.children:
-            item.disabled = True
+        for item in self.children: item.disabled = True
 
 trocas_pendentes = {}
-
-def novo_jogador():
-    return {
-        "coracoes": 20,
-        "doces": 0,
-        "personagens": [],
-        "fragmentos": 0,
-        "moedas": 0,
-        "msg_count": 0,
-        "coracoes_ganhos": 0,
-        "ultimo_doce": 0,
-        "historico_trocas": []
-    }
 
 # =================== COMANDO SLASH ===================
 @bot.tree.command(name="hellokitty", description="Abre o painel do Hello Kitty Café ☕")
 async def hellokitty(interaction: discord.Interaction):
     embed = discord.Embed(
         title="☕ Hello Kitty Café 🎀",
-        description="**Bem-vindo ao café!**\nClique nos botões para começar sua coleção.",
+        description="**Clique nos botões para explorar o café!**",
         color=discord.Color.from_rgb(255, 105, 180)
     )
     embed.set_image(url="attachment://Hello_kitty.png")
@@ -723,8 +709,7 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
+    if message.author.bot: return
     dados = carregar_dados()
     uid = str(message.author.id)
     if uid not in dados:
@@ -733,17 +718,11 @@ async def on_message(message):
     jogador = dados[uid]
     jogador["msg_count"] += 1
 
-    # Efeitos de mensagem
-    if tem_efeito(uid, dados, "dear_daniel") and jogador["msg_count"] % 50 == 0:
-        jogador["coracoes"] += 1
-    if tem_efeito(uid, dados, "twin_stars") and jogador["msg_count"] % 10 == 0:
-        jogador["coracoes"] += 1
-    if tem_efeito(uid, dados, "nene") and jogador["msg_count"] % 5 == 0:
-        jogador["coracoes"] += 3
-    if tem_efeito(uid, dados, "pipi") and jogador["msg_count"] % 80 == 0:
-        jogador["coracoes"] += 1
-    if tem_efeito(uid, dados, "mocha") and jogador["msg_count"] % 60 == 0:
-        jogador["coracoes"] += 1
+    if tem_efeito(uid, dados, "dear_daniel") and jogador["msg_count"] % 50 == 0: jogador["coracoes"] += 1
+    if tem_efeito(uid, dados, "twin_stars") and jogador["msg_count"] % 10 == 0: jogador["coracoes"] += 1
+    if tem_efeito(uid, dados, "nene") and jogador["msg_count"] % 5 == 0: jogador["coracoes"] += 3
+    if tem_efeito(uid, dados, "pipi") and jogador["msg_count"] % 80 == 0: jogador["coracoes"] += 1
+    if tem_efeito(uid, dados, "mocha") and jogador["msg_count"] % 60 == 0: jogador["coracoes"] += 1
 
     ganho = calcular_coracoes_msg(uid, dados, jogador["msg_count"])
     jogador["coracoes"] += ganho
@@ -753,11 +732,8 @@ async def on_message(message):
         jogador["coracoes"] += 1
         jogador["coracoes_ganhos"] -= 20
 
-    # Fragmentos por George e Sasa
-    if tem_efeito(uid, dados, "george") and jogador["msg_count"] % 100 == 0:
-        jogador["fragmentos"] += 1
-    if tem_efeito(uid, dados, "sasa") and jogador["msg_count"] % 50 == 0:
-        jogador["fragmentos"] += 1
+    if tem_efeito(uid, dados, "george") and jogador["msg_count"] % 100 == 0: jogador["fragmentos"] += 1
+    if tem_efeito(uid, dados, "sasa") and jogador["msg_count"] % 50 == 0: jogador["fragmentos"] += 1
 
     salvar_dados(dados)
     await bot.process_commands(message)
