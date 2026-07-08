@@ -68,8 +68,9 @@ PERSONAGENS_EMOJI = {
     "Mocha": "🐶"
 }
 
-# Mapeamento de imagens locais (nomes em minúsculo)
+# Mapeamento de imagens locais
 IMAGENS_LOCAIS = {
+    "Nenê": "nene.png",
     "Hello Kitty": "hellokitty.png",
     "My Melody": "mymelody.png",
     "Kuromi": "kuromi.png",
@@ -303,19 +304,16 @@ class MenuPrincipal(View):
         if duplicar:
             dados[uid]["personagens"].append(personagem["nome"])
 
-        # Fragmentos Hello Kitty
         if personagem["nome"] == "Hello Kitty":
             frags = random.randint(1, 5)
             dados[uid]["fragmentos"] += frags
 
-        # Efeitos de fragmentos extras
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.10: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "rory") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
 
-        # Reembolso
         reembolso = False
         if tem_efeito(uid, dados, "my_melody") and random.random() < 0.10: reembolso = True
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.20: reembolso = True
@@ -325,13 +323,11 @@ class MenuPrincipal(View):
         if reembolso and not gratis:
             dados[uid]["coracoes"] += 1
 
-        # Bônus de corações
         if tem_efeito(uid, dados, "badtz_maru"): dados[uid]["coracoes"] += 5
         if tem_efeito(uid, dados, "sugar") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "lala") and random.random() < 0.10: dados[uid]["coracoes"] += 1
 
-        # Efeitos de entrada dos comuns
         if personagem["nome"] == "Charmmy Kitty":
             dados[uid]["coracoes"] += 1
         if personagem["nome"] == "Tiny Chum":
@@ -387,12 +383,10 @@ class MenuPrincipal(View):
                 description=f"**Raridade:** {p['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(p['efeito'], 'Nenhuma')}",
                 color=CORES_RARIDADE.get(p['raridade'], 0xFFB6C1)
             )
-            # Adiciona imagem apenas se existir
             if p["nome"] in IMAGENS_LOCAIS:
                 caminho = IMAGENS_LOCAIS[p["nome"]]
                 if os.path.exists(caminho):
                     embed.set_image(url=f"attachment://{caminho}")
-                # Não adiciona se não existir
             embeds.append(embed)
 
         if embeds:
