@@ -1,61 +1,177 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from discord.ui import Button, View, Select
+from discord.ui import Button, View, Select, Modal, TextInput
 import random
 import json
 import os
 import datetime
 from datetime import timezone
 import asyncio
-import google.genai as genai
+import asyncpg
+import logging
 from collections import defaultdict
 
 # =================== CONFIGURAÇÕES ===================
 TOKEN = os.getenv("TOKEN")
-ARQUIVO_DADOS = os.getenv("DATA_PATH", "dados_cafe.json")
+DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL no Railway
 GUILD_ID = os.getenv("GUILD_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ARQUIVO_IA = "ia_config.json"
-# =====================================================
 
-# Configurar Gemini (nova SDK)
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+
+# =================== BANCO DE DADOS ===================
+db_pool = None
+
+async def init_db():
+    global db_pool
+    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+    async with db_pool.acquire() as conn:
+        # Tabela de usuários
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                coracoes INTEGER DEFAULT 3,
+                doces INTEGER DEFAULT 0,
+                fragmentos INTEGER DEFAULT 0,
+                moedas INTEGER DEFAULT 0,
+                msg_count INTEGER DEFAULT 0,
+                coracoes_ganhos INTEGER DEFAULT 0,
+                ultimo_doce BIGINT DEFAULT 0,
+                xp INTEGER DEFAULT 0,
+                nivel INTEGER DEFAULT 1,
+                conquistas JSONB DEFAULT '[]'::jsonb,
+                missoes_diarias JSONB DEFAULT '{}'::jsonb,
+                missoes_semanais JSONB DEFAULT '{}'::jsonb,
+                missoes_concluidas JSONB DEFAULT '[]'::jsonb,
+                decoracoes JSONB DEFAULT '[]'::jsonb,
+                decoracao_ativa JSONB DEFAULT '{}'::jsonb,
+                lista_desejos JSONB DEFAULT '[]'::jsonb,
+                resumo_dm BOOLEAN DEFAULT FALSE,
+                ultimo_drop BIGINT DEFAULT 0,
+                personagens JSONB DEFAULT '[]'::jsonb,
+                historico_trocas JSONB DEFAULT '[]'::jsonb
+            )
+        ''')
+        # Tabela de trocas pendentes
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS trocas (
+                id SERIAL PRIMARY KEY,
+                solicitante_id TEXT REFERENCES users(id),
+                alvo_id TEXT REFERENCES users(id),
+                personagem_oferecido TEXT,
+                personagem_desejado TEXT,
+                status TEXT DEFAULT 'pendente',
+                timestamp BIGINT
+            )
+        ''')
+        logging.info("Banco de dados inicializado.")
+
+async def get_user_data(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
+        if not row:
+            # Criar novo usuário
+            default = {
+                "coracoes": 3,
+                "doces": 0,
+                "fragmentos": 0,
+                "moedas": 0,
+                "msg_count": 0,
+                "coracoes_ganhos": 0,
+                "ultimo_doce": 0,
+                "xp": 0,
+                "nivel": 1,
+                "conquistas": [],
+                "missoes_diarias": {},
+                "missoes_semanais": {},
+                "missoes_concluidas": [],
+                "decoracoes": [],
+                "decoracao_ativa": {},
+                "lista_desejos": [],
+                "resumo_dm": False,
+                "ultimo_drop": 0,
+                "personagens": [],
+                "historico_trocas": []
+            }
+            await conn.execute('''
+                INSERT INTO users (
+                    id, coracoes, doces, fragmentos, moedas, msg_count,
+                    coracoes_ganhos, ultimo_doce, xp, nivel, conquistas,
+                    missoes_diarias, missoes_semanais, missoes_concluidas,
+                    decoracoes, decoracao_ativa, lista_desejos, resumo_dm,
+                    ultimo_drop, personagens, historico_trocas
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            ''', user_id, default["coracoes"], default["doces"], default["fragmentos"],
+               default["moedas"], default["msg_count"], default["coracoes_ganhos"],
+               default["ultimo_doce"], default["xp"], default["nivel"],
+               json.dumps(default["conquistas"]), json.dumps(default["missoes_diarias"]),
+               json.dumps(default["missoes_semanais"]), json.dumps(default["missoes_concluidas"]),
+               json.dumps(default["decoracoes"]), json.dumps(default["decoracao_ativa"]),
+               json.dumps(default["lista_desejos"]), default["resumo_dm"],
+               default["ultimo_drop"], json.dumps(default["personagens"]),
+               json.dumps(default["historico_trocas"]))
+            row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
+        # Converter JSON strings para objetos Python
+        data = dict(row)
+        for key in ['conquistas', 'missoes_diarias', 'missoes_semanais', 'missoes_concluidas',
+                    'decoracoes', 'decoracao_ativa', 'lista_desejos', 'personagens', 'historico_trocas']:
+            if isinstance(data[key], str):
+                data[key] = json.loads(data[key])
+        return data
+
+async def update_user_data(user_id, data):
+    async with db_pool.acquire() as conn:
+        await conn.execute('''
+            UPDATE users SET
+                coracoes = $1,
+                doces = $2,
+                fragmentos = $3,
+                moedas = $4,
+                msg_count = $5,
+                coracoes_ganhos = $6,
+                ultimo_doce = $7,
+                xp = $8,
+                nivel = $9,
+                conquistas = $10,
+                missoes_diarias = $11,
+                missoes_semanais = $12,
+                missoes_concluidas = $13,
+                decoracoes = $14,
+                decoracao_ativa = $15,
+                lista_desejos = $16,
+                resumo_dm = $17,
+                ultimo_drop = $18,
+                personagens = $19,
+                historico_trocas = $20
+            WHERE id = $21
+        ''', data['coracoes'], data['doces'], data['fragmentos'], data['moedas'],
+           data['msg_count'], data['coracoes_ganhos'], data['ultimo_doce'],
+           data['xp'], data['nivel'], json.dumps(data['conquistas']),
+           json.dumps(data['missoes_diarias']), json.dumps(data['missoes_semanais']),
+           json.dumps(data['missoes_concluidas']), json.dumps(data['decoracoes']),
+           json.dumps(data['decoracao_ativa']), json.dumps(data['lista_desejos']),
+           data['resumo_dm'], data['ultimo_drop'], json.dumps(data['personagens']),
+           json.dumps(data['historico_trocas']), user_id)
+
+# =================== IA (Gemini) ===================
 cliente_ia = None
-
-# CORREÇÃO APLICADA: O modelo gemini-1.5-flash estava gerando erro 404 (não encontrado). 
-# Atualizado para a versão atualizada suportada gratuitamente.
-MODELO_IA = "gemini-2.5-flash"  
-
 if GEMINI_API_KEY:
-    cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        import google.genai as genai
+        cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
+        MODELO_IA = "gemini-2.0-flash"  # Modelo disponível gratuitamente
+    except Exception as e:
+        logging.error(f"Erro ao inicializar Gemini: {e}")
 
+# =================== BOT ===================
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------- Arquivos de dados ----------
-def carregar_dados():
-    if os.path.exists(ARQUIVO_DADOS):
-        with open(ARQUIVO_DADOS, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def salvar_dados(dados):
-    with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
-        json.dump(dados, f, indent=4, ensure_ascii=False)
-
-def carregar_config_ia():
-    if os.path.exists(ARQUIVO_IA):
-        with open(ARQUIVO_IA, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def salvar_config_ia(config):
-    with open(ARQUIVO_IA, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4, ensure_ascii=False)
-
-# ---------- Emojis e imagens ----------
+# ---------- Emojis e imagens (mesmo do original) ----------
 PERSONAGENS_EMOJI = {
     "Nenê": "💫", "Hello Kitty": "👧", "Dear Daniel": "💙", "My Melody": "🎀",
     "Kuromi": "💀", "Pompompurin": "🍮", "Cinnamoroll": "☁️",
@@ -83,7 +199,6 @@ CORES_RARIDADE = {
     "Épico": 0xFF8C00, "Raro": 0x1E90FF, "Incomum": 0x32CD32, "Comum": 0xA9A9A9
 }
 
-# ---------- Efeitos ----------
 EFEITOS_DESC = {
     "hello_kitty": "20% reembolso, +2💗/msg, 10% frag extra",
     "dear_daniel": "+1💗 a cada 50 msgs",
@@ -193,7 +308,7 @@ MISSOES_SEMANAIS = [
     {"id": "trocar5", "desc": "Troque 5 personagens", "tipo": "trocas", "meta": 5, "recompensa": {"fragmentos": 10}}
 ]
 
-# ---------- Decorações e Álbuns ----------
+# ---------- Decorações ----------
 DECORACOES_LOJA = {
     "moldura_ouro": {"nome": "🖼️ Moldura Dourada", "custo": 500, "tipo": "moldura"},
     "moldura_prata": {"nome": "🖼️ Moldura Prateada", "custo": 300, "tipo": "moldura"},
@@ -208,7 +323,7 @@ ALBUNS = {
 # ---------- Funções auxiliares ----------
 def tem_efeito(uid, dados, efeito_nome):
     if uid not in dados: return False
-    for nome in set(dados[uid]["personagens"]):
+    for nome in set(dados["personagens"]):
         if nome == "Nenê" and efeito_nome == "nene": return True
         for p in PERSONAGENS:
             if p["nome"] == nome and p["efeito"] == efeito_nome: return True
@@ -301,7 +416,7 @@ async def notificar_meta(uid, milestone, mensagem):
     except:
         pass
 
-# ---------- Sistema de XP e níveis ----------
+# ---------- Sistema de XP ----------
 def calcular_nivel(xp):
     for nivel, xp_necessario in reversed(NIVEIS):
         if xp >= xp_necessario:
@@ -316,15 +431,15 @@ def recompensa_nivel(nivel):
 # ---------- Verificação de conquistas ----------
 def verificar_conquistas(uid, dados):
     novas = []
-    unicos = len(set(dados[uid]["personagens"]))
-    trocas = len(dados[uid].get("historico_trocas", []))
-    moedas = dados[uid].get("moedas", 0)
+    unicos = len(set(dados["personagens"]))
+    trocas = len(dados.get("historico_trocas", []))
+    moedas = dados.get("moedas", 0)
     for chave, conq in CONQUISTAS.items():
-        if chave in dados[uid].get("conquistas", []):
+        if chave in dados.get("conquistas", []):
             continue
         if conq["tipo"] == "unicos" and unicos >= conq["meta"]:
             novas.append(chave)
-        elif conq["tipo"] == "raridade" and any(p in dados[uid]["personagens"] for p in [c["nome"] for c in PERSONAGENS if c["raridade"] in ("Lendário", "Mítico", "Ultimate")]):
+        elif conq["tipo"] == "raridade" and any(p in dados["personagens"] for p in [c["nome"] for c in PERSONAGENS if c["raridade"] in ("Lendário", "Mítico", "Ultimate")]):
             novas.append(chave)
         elif conq["tipo"] == "trocas" and trocas >= conq["meta"]:
             novas.append(chave)
@@ -333,46 +448,47 @@ def verificar_conquistas(uid, dados):
     return novas
 
 # ---------- Missões ----------
-def resetar_missoes_diarias(uid, dados):
-    dados[uid]["missoes_diarias"] = {m["id"]: 0 for m in MISSOES_DIARIAS}
-    dados[uid]["ultima_reset_diaria"] = datetime.datetime.now(timezone.utc).timestamp()
+def resetar_missoes_diarias(dados):
+    dados["missoes_diarias"] = {m["id"]: 0 for m in MISSOES_DIARIAS}
+    dados["ultima_reset_diaria"] = datetime.datetime.now(timezone.utc).timestamp()
 
-def resetar_missoes_semanais(uid, dados):
-    dados[uid]["missoes_semanais"] = {m["id"]: 0 for m in MISSOES_SEMANAIS}
-    dados[uid]["ultima_reset_semanal"] = datetime.datetime.now(timezone.utc).timestamp()
+def resetar_missoes_semanais(dados):
+    dados["missoes_semanais"] = {m["id"]: 0 for m in MISSOES_SEMANAIS}
+    dados["ultima_reset_semanal"] = datetime.datetime.now(timezone.utc).timestamp()
 
-# =================== VIEW PRINCIPAL ===================
+# =================== VIEWS ===================
+
+# ---------- Menu Principal ----------
 class MenuPrincipal(View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="Comprar Personagem (1💗) 🎁", style=discord.ButtonStyle.success, custom_id="comprar_personagem")
     async def comprar_personagem(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
+        dados = await get_user_data(str(interaction.user.id))
         uid = str(interaction.user.id)
-        if uid not in dados:
-            dados[uid] = novo_jogador()
-        if dados[uid]["coracoes"] < 1:
+        if dados["coracoes"] < 1:
             await interaction.response.send_message("💔 Você não tem corações!", ephemeral=True)
             return
 
         gratis = chance_nao_gastar(uid, dados)
         if not gratis:
-            dados[uid]["coracoes"] -= 1
+            dados["coracoes"] -= 1
 
         if random.random() < 1e-11:
             shiny = random.random() < 0.005
             nome_final = "Nenê" if not shiny else "✨ Nenê Cristal"
-            dados[uid]["personagens"].append(nome_final)
-            salvar_dados(dados)
+            dados["personagens"].append(nome_final)
+            await update_user_data(uid, dados)
             embed = discord.Embed(title=f"{PERSONAGENS_EMOJI.get('Nenê', '💫')} {nome_final}",
                                   description=f"**Raridade:** Ultimate\n**Habilidade:** {EFEITOS_DESC['nene']}",
                                   color=CORES_RARIDADE["Ultimate"])
             await enviar_card(interaction, embed, "Nenê")
-            if "compras" in dados[uid].get("missoes_diarias", {}):
-                dados[uid]["missoes_diarias"]["compras"] += 1
-            if "compras" in dados[uid].get("missoes_semanais", {}):
-                dados[uid]["missoes_semanais"]["compras"] += 1
+            if "compras" in dados.get("missoes_diarias", {}):
+                dados["missoes_diarias"]["compras"] += 1
+            if "compras" in dados.get("missoes_semanais", {}):
+                dados["missoes_semanais"]["compras"] += 1
+            await update_user_data(uid, dados)
             return
 
         personagem = sortear_personagem(uid, dados)
@@ -383,19 +499,19 @@ class MenuPrincipal(View):
         if tem_efeito(uid, dados, "landry") and random.random() < 0.05: duplicar = True
         if tem_efeito(uid, dados, "kiki") and random.random() < 0.02: duplicar = True
 
-        dados[uid]["personagens"].append(nome_final)
+        dados["personagens"].append(nome_final)
         if duplicar:
-            dados[uid]["personagens"].append(nome_final)
+            dados["personagens"].append(nome_final)
 
         if personagem["nome"] == "Hello Kitty":
             frags = random.randint(1, 5)
-            dados[uid]["fragmentos"] += frags
+            dados["fragmentos"] += frags
 
-        if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.10: dados[uid]["fragmentos"] += 1
-        if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados[uid]["fragmentos"] += 1
-        if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
-        if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados[uid]["fragmentos"] += 1
-        if tem_efeito(uid, dados, "rory") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
+        if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.10: dados["fragmentos"] += 1
+        if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados["fragmentos"] += 1
+        if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados["fragmentos"] += 1
+        if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados["fragmentos"] += 1
+        if tem_efeito(uid, dados, "rory") and random.random() < 0.05: dados["fragmentos"] += 1
 
         reembolso = False
         if tem_efeito(uid, dados, "my_melody") and random.random() < 0.10: reembolso = True
@@ -404,24 +520,24 @@ class MenuPrincipal(View):
         if tem_efeito(uid, dados, "moppu") and random.random() < 0.03: reembolso = True
         if tem_efeito(uid, dados, "lulu") and random.random() < 0.01: reembolso = True
         if reembolso and not gratis:
-            dados[uid]["coracoes"] += 1
+            dados["coracoes"] += 1
 
-        if tem_efeito(uid, dados, "badtz_maru"): dados[uid]["coracoes"] += 5
-        if tem_efeito(uid, dados, "sugar") and random.random() < 0.05: dados[uid]["coracoes"] += 1
-        if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados[uid]["coracoes"] += 1
-        if tem_efeito(uid, dados, "lala") and random.random() < 0.10: dados[uid]["coracoes"] += 1
+        if tem_efeito(uid, dados, "badtz_maru"): dados["coracoes"] += 5
+        if tem_efeito(uid, dados, "sugar") and random.random() < 0.05: dados["coracoes"] += 1
+        if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados["coracoes"] += 1
+        if tem_efeito(uid, dados, "lala") and random.random() < 0.10: dados["coracoes"] += 1
 
         if personagem["nome"] == "Charmmy Kitty":
-            dados[uid]["coracoes"] += 1
+            dados["coracoes"] += 1
         if personagem["nome"] == "Tiny Chum":
-            dados[uid]["coracoes"] += 2
+            dados["coracoes"] += 2
 
-        if "compras" in dados[uid].get("missoes_diarias", {}):
-            dados[uid]["missoes_diarias"]["compras"] += 1
-        if "compras" in dados[uid].get("missoes_semanais", {}):
-            dados[uid]["missoes_semanais"]["compras"] += 1
+        if "compras" in dados.get("missoes_diarias", {}):
+            dados["missoes_diarias"]["compras"] += 1
+        if "compras" in dados.get("missoes_semanais", {}):
+            dados["missoes_semanais"]["compras"] += 1
 
-        salvar_dados(dados)
+        await update_user_data(uid, dados)
 
         extras = ""
         if gratis: extras += "\n🍮 Você não gastou o 💗!"
@@ -433,28 +549,26 @@ class MenuPrincipal(View):
             description=f"**Raridade:** {personagem['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(personagem['efeito'], 'Nenhuma')}{extras}",
             color=CORES_RARIDADE.get(personagem['raridade'], 0xFFB6C1)
         )
-        embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
+        embed.set_footer(text=f"💗: {dados['coracoes']} | Frag. HK: {dados['fragmentos']} | 🪙: {dados['moedas']}")
         await enviar_card(interaction, embed, personagem["nome"])
 
         novas = verificar_conquistas(uid, dados)
         for c in novas:
-            dados[uid]["conquistas"].append(c)
+            dados["conquistas"].append(c)
+            await update_user_data(uid, dados)
             await interaction.followup.send(f"🏆 Conquista desbloqueada: **{CONQUISTAS[c]['nome']}**!", ephemeral=True)
 
     @discord.ui.button(label="Loja do Café 🛍️", style=discord.ButtonStyle.primary, custom_id="loja_cafe")
     async def loja(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
+        dados = await get_user_data(str(interaction.user.id))
         uid = str(interaction.user.id)
-        if uid not in dados:
-            dados[uid] = novo_jogador()
-            salvar_dados(dados)
 
         embed = discord.Embed(title="🛍️ Loja do Hello Kitty Café", color=0xFFD700)
-        embed.add_field(name="Recursos", value=f"💗 {dados[uid]['coracoes']} | 🍬 {dados[uid].get('doces',0)} | 🪙 {dados[uid].get('moedas',0)}", inline=False)
+        embed.add_field(name="Recursos", value=f"💗 {dados['coracoes']} | 🍬 {dados['doces']} | 🪙 {dados['moedas']}", inline=False)
         embed.add_field(name="Conversões", value="⚡ 100🍬 → 4💗\n🍀 Cupom da Sorte (200💗+300🍬) → Personagem Raro+\n👑 Resgatar Hello Kitty (100 fragmentos)", inline=False)
         embed.add_field(name="Loja de Moedas", value="🪙 Compre personagens específicos", inline=False)
         embed.add_field(name="Decorações", value="🖼️ Compre molduras e fundos para seu perfil", inline=False)
-        embed.set_footer(text=f"Fragmentos Hello: {dados[uid]['fragmentos']}")
+        embed.set_footer(text=f"Fragmentos Hello: {dados['fragmentos']}")
 
         if os.path.exists(LOJA_IMAGEM):
             file = discord.File(LOJA_IMAGEM, filename=LOJA_IMAGEM)
@@ -550,11 +664,9 @@ class LojaCafeView(View):
 
     @discord.ui.button(label="Doces Diários 🍬", style=discord.ButtonStyle.success)
     async def doces_diarios(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if uid not in dados: dados[uid] = novo_jogador()
+        dados = await get_user_data(self.uid)
         agora = datetime.datetime.now(timezone.utc).timestamp()
-        ultimo = dados[uid].get("ultimo_doce", 0)
+        ultimo = dados.get("ultimo_doce", 0)
         if agora - ultimo < 86400:
             falta = 86400 - (agora - ultimo)
             horas = int(falta // 3600)
@@ -562,36 +674,34 @@ class LojaCafeView(View):
             await interaction.response.send_message(f"⏰ Volte em {horas}h {minutos}m.", ephemeral=True)
             return
         qtd = random.randint(3, 8)
-        if tem_efeito(uid, dados, "keroppi"): qtd += 1
-        dados[uid]["doces"] = dados[uid].get("doces", 0) + qtd
-        dados[uid]["ultimo_doce"] = agora
-        salvar_dados(dados)
-        await interaction.response.send_message(f"🍬 Você ganhou **{qtd} Doces**! Total: {dados[uid]['doces']}", ephemeral=False)
+        if tem_efeito(self.uid, dados, "keroppi"): qtd += 1
+        dados["doces"] = dados.get("doces", 0) + qtd
+        dados["ultimo_doce"] = agora
+        await update_user_data(self.uid, dados)
+        await interaction.response.send_message(f"🍬 Você ganhou **{qtd} Doces**! Total: {dados['doces']}", ephemeral=False)
 
     @discord.ui.button(label="Converter 100🍬 → 4💗", style=discord.ButtonStyle.primary)
     async def converter(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if dados[uid].get("doces", 0) < 100:
+        dados = await get_user_data(self.uid)
+        if dados.get("doces", 0) < 100:
             await interaction.response.send_message("Precisa de 100 doces.", ephemeral=True)
             return
-        dados[uid]["doces"] -= 100
-        dados[uid]["coracoes"] += 4
-        salvar_dados(dados)
+        dados["doces"] -= 100
+        dados["coracoes"] += 4
+        await update_user_data(self.uid, dados)
         await interaction.response.send_message("🍬 100 doces → 4💗!", ephemeral=True)
 
     @discord.ui.button(label="Cupom da Sorte (200💗+300🍬) 🍀", style=discord.ButtonStyle.primary)
     async def cupom(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if dados[uid]["coracoes"] < 200 or dados[uid].get("doces",0) < 300:
+        dados = await get_user_data(self.uid)
+        if dados["coracoes"] < 200 or dados.get("doces", 0) < 300:
             await interaction.response.send_message("Recursos insuficientes.", ephemeral=True)
             return
-        dados[uid]["coracoes"] -= 200
-        dados[uid]["doces"] -= 300
-        personagem = sortear_personagem(uid, dados, cupom_raridade=True)
-        dados[uid]["personagens"].append(personagem["nome"])
-        salvar_dados(dados)
+        dados["coracoes"] -= 200
+        dados["doces"] -= 300
+        personagem = sortear_personagem(self.uid, dados, cupom_raridade=True)
+        dados["personagens"].append(personagem["nome"])
+        await update_user_data(self.uid, dados)
         embed = discord.Embed(
             title=f"{PERSONAGENS_EMOJI.get(personagem['nome'], '❓')} {personagem['nome']}",
             description=f"**Raridade:** {personagem['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(personagem['efeito'], 'Nenhuma')}\n🍀 Cupom da Sorte!",
@@ -601,16 +711,15 @@ class LojaCafeView(View):
 
     @discord.ui.button(label="Resgatar Hello Kitty (100 frags) 👑", style=discord.ButtonStyle.danger)
     async def resgatar(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if dados[uid].get("fragmentos", 0) < 100:
+        dados = await get_user_data(self.uid)
+        if dados.get("fragmentos", 0) < 100:
             await interaction.response.send_message("Precisa de 100 fragmentos.", ephemeral=True)
             return
-        dados[uid]["fragmentos"] -= 100
-        dados[uid]["personagens"].append("Hello Kitty")
-        bonus = random.randint(1,5)
-        dados[uid]["fragmentos"] += bonus
-        salvar_dados(dados)
+        dados["fragmentos"] -= 100
+        dados["personagens"].append("Hello Kitty")
+        bonus = random.randint(1, 5)
+        dados["fragmentos"] += bonus
+        await update_user_data(self.uid, dados)
         embed = discord.Embed(
             title="👑 Hello Kitty",
             description=f"**Raridade:** Mítico\n**Habilidade:** {EFEITOS_DESC['hello_kitty']}\n👑 Resgatada! +{bonus} fragmentos extras.",
@@ -620,11 +729,10 @@ class LojaCafeView(View):
 
     @discord.ui.button(label="Loja de Moedas 🪙", style=discord.ButtonStyle.secondary)
     async def loja_moedas(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
+        dados = await get_user_data(self.uid)
         embed = discord.Embed(
             title="🪙 Loja de Moedas – Compre personagens específicos",
-            description=f"Saldo: **{dados[uid].get('moedas', 0)}🪙**\n\nSelecione um personagem:",
+            description=f"Saldo: **{dados.get('moedas', 0)}🪙**\n\nSelecione um personagem:",
             color=0x1ABC9C
         )
         chars = [p for p in PERSONAGENS]
@@ -636,23 +744,22 @@ class LojaCafeView(View):
         select = Select(placeholder="Escolha um personagem...", options=options)
         async def callback(interaction_select: discord.Interaction):
             nome = select.values[0]
-            dados = carregar_dados()
-            uid = str(interaction_select.user.id)
+            dados = await get_user_data(self.uid)
             p = next((x for x in PERSONAGENS if x["nome"] == nome), None)
             if not p: return
             preco = PRECO_MOEDAS[p["raridade"]]
-            if dados[uid].get("moedas", 0) < preco:
+            if dados.get("moedas", 0) < preco:
                 await interaction_select.response.send_message("Moedas insuficientes.", ephemeral=True)
                 return
-            dados[uid]["moedas"] -= preco
-            dados[uid]["personagens"].append(nome)
-            salvar_dados(dados)
+            dados["moedas"] -= preco
+            dados["personagens"].append(nome)
+            await update_user_data(self.uid, dados)
             embed = discord.Embed(
                 title=f"{PERSONAGENS_EMOJI.get(nome, '❓')} {nome}",
                 description=f"**Raridade:** {p['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(p['efeito'], 'Nenhuma')}\n💰 Comprado por {preco}🪙",
                 color=CORES_RARIDADE.get(p['raridade'], 0xFFB6C1)
             )
-            embed.set_footer(text=f"Saldo restante: {dados[uid]['moedas']}🪙")
+            embed.set_footer(text=f"Saldo restante: {dados['moedas']}🪙")
             await enviar_card(interaction_select, embed, nome)
         select.callback = callback
         view = View(timeout=60)
@@ -661,21 +768,21 @@ class LojaCafeView(View):
 
     @discord.ui.button(label="Decorações 🖼️", style=discord.ButtonStyle.secondary)
     async def decoracoes(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        embed = discord.Embed(title="🖼️ Loja de Decorações", description=f"Moedas: {dados[uid].get('moedas', 0)}🪙", color=0xFF69B4)
+        dados = await get_user_data(self.uid)
+        embed = discord.Embed(title="🖼️ Loja de Decorações", description=f"Moedas: {dados.get('moedas', 0)}🪙", color=0xFF69B4)
         options = [discord.SelectOption(label=f"{d['nome']} ({d['custo']}🪙)", value=chave) for chave, d in DECORACOES_LOJA.items()]
         select = Select(placeholder="Escolha uma decoração...", options=options)
         async def callback(interaction_select: discord.Interaction):
             chave = select.values[0]
             item = DECORACOES_LOJA[chave]
-            if dados[uid].get("moedas", 0) < item["custo"]:
+            dados = await get_user_data(self.uid)
+            if dados.get("moedas", 0) < item["custo"]:
                 await interaction_select.response.send_message("Moedas insuficientes.", ephemeral=True)
                 return
-            dados[uid]["moedas"] -= item["custo"]
-            dados[uid]["decoracoes"].append(chave)
-            dados[uid]["decoracao_ativa"][item["tipo"]] = chave
-            salvar_dados(dados)
+            dados["moedas"] -= item["custo"]
+            dados["decoracoes"].append(chave)
+            dados["decoracao_ativa"][item["tipo"]] = chave
+            await update_user_data(self.uid, dados)
             await interaction_select.response.send_message(f"✅ Decoração {item['nome']} comprada e ativada!", ephemeral=True)
         select.callback = callback
         view = View(timeout=60)
@@ -689,13 +796,13 @@ class AmigosView(View):
 
     @discord.ui.button(label="Minha Turma 👥", style=discord.ButtonStyle.primary)
     async def minha_turma(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
+        dados = await get_user_data(str(interaction.user.id))
         uid = str(interaction.user.id)
-        if uid not in dados or not dados[uid]["personagens"]:
+        if not dados["personagens"]:
             await interaction.response.send_message("Sua turma está vazia!", ephemeral=True)
             return
         contagem = {}
-        for nome in dados[uid]["personagens"]:
+        for nome in dados["personagens"]:
             contagem[nome] = contagem.get(nome, 0) + 1
         desc = ""
         for nome, qtd in contagem.items():
@@ -704,14 +811,14 @@ class AmigosView(View):
             if nome == "Nenê": efeito = "nene"
             desc += f"{emoji} {nome} ×{qtd}  [{EFEITOS_DESC.get(efeito, '—')}]\n"
         embed = discord.Embed(title="👥 Turma do Hello Kitty Café", description=desc, color=0xFF69B4)
-        embed.set_footer(text=f"Total: {len(dados[uid]['personagens'])} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
+        embed.set_footer(text=f"Total: {len(dados['personagens'])} | Frag. HK: {dados['fragmentos']} | 🪙: {dados['moedas']}")
         await interaction.response.send_message(embed=embed, view=TurmaAcoesView(uid), ephemeral=True)
 
     @discord.ui.button(label="Trocar com Amigo 🤝", style=discord.ButtonStyle.success)
     async def trocar(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
+        dados = await get_user_data(str(interaction.user.id))
         uid = str(interaction.user.id)
-        personagens = list(set(dados[uid]["personagens"]))
+        personagens = list(set(dados["personagens"]))
         if not personagens:
             await interaction.response.send_message("Você não tem personagens.", ephemeral=True)
             return
@@ -727,16 +834,20 @@ class AmigosView(View):
             select_m = Select(placeholder="Escolha o amigo...", options=membro_opts)
             async def membro_cb(interaction_m: discord.Interaction):
                 alvo_id = select_m.values[0]
+                # Criar solicitação no banco
+                async with db_pool.acquire() as conn:
+                    await conn.execute('''
+                        INSERT INTO trocas (solicitante_id, alvo_id, personagem_oferecido, timestamp)
+                        VALUES ($1, $2, $3, $4)
+                    ''', uid, alvo_id, personagem_oferecido, int(datetime.datetime.now(timezone.utc).timestamp()))
                 alvo_user = await bot.fetch_user(int(alvo_id))
-                trocas_pendentes[uid] = {"alvo": alvo_id, "personagem": personagem_oferecido}
                 embed = discord.Embed(
                     title="🤝 Proposta de Troca",
-                    description=f"{interaction.user.mention} quer trocar **{personagem_oferecido}** com você!",
+                    description=f"{interaction.user.mention} quer trocar **{personagem_oferecido}** com você!\nUse o comando `/trocas` para ver e responder.",
                     color=0x2ECC71
                 )
-                view = AceitarRecusarView(uid, alvo_id, personagem_oferecido)
-                await interaction.channel.send(content=alvo_user.mention, embed=embed, view=view)
-                await interaction_m.response.send_message("Pedido enviado!", ephemeral=True)
+                await interaction_m.response.send_message("✅ Pedido enviado! O amigo será notificado.", ephemeral=True)
+                await interaction.channel.send(content=alvo_user.mention, embed=embed)
             select_m.callback = membro_cb
             view_m = View(timeout=60)
             view_m.add_item(select_m)
@@ -748,9 +859,8 @@ class AmigosView(View):
 
     @discord.ui.button(label="Histórico de Trocas 📜", style=discord.ButtonStyle.secondary)
     async def historico(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        historico = dados[uid].get("historico_trocas", [])
+        dados = await get_user_data(str(interaction.user.id))
+        historico = dados.get("historico_trocas", [])
         if not historico:
             await interaction.response.send_message("Nenhuma troca realizada.", ephemeral=True)
             return
@@ -765,10 +875,9 @@ class TurmaAcoesView(View):
 
     @discord.ui.button(label="Vender Duplicata 💰", style=discord.ButtonStyle.secondary)
     async def vender(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
+        dados = await get_user_data(self.uid)
         contagem = {}
-        for nome in dados[uid]["personagens"]:
+        for nome in dados["personagens"]:
             contagem[nome] = contagem.get(nome, 0) + 1
         dups = [nome for nome, qtd in contagem.items() if qtd > 1]
         if not dups:
@@ -781,15 +890,16 @@ class TurmaAcoesView(View):
             raridade = next((p["raridade"] for p in PERSONAGENS if p["nome"] == nome), "Comum")
             if nome == "Nenê": raridade = "Ultimate"
             valor = PRECO_MOEDAS.get(raridade, 5)
-            dados[uid]["personagens"].remove(nome)
-            dados[uid]["moedas"] = dados[uid].get("moedas", 0) + valor
-            salvar_dados(dados)
+            dados = await get_user_data(self.uid)
+            dados["personagens"].remove(nome)
+            dados["moedas"] = dados.get("moedas", 0) + valor
+            await update_user_data(self.uid, dados)
             embed = discord.Embed(
                 title=f"💰 Venda: {PERSONAGENS_EMOJI.get(nome, '❓')} {nome}",
                 description=f"**Raridade:** {raridade}\nValor: **{valor}🪙**",
                 color=CORES_RARIDADE.get(raridade, 0xFFB6C1)
             )
-            embed.set_footer(text=f"Total de moedas: {dados[uid]['moedas']}")
+            embed.set_footer(text=f"Total de moedas: {dados['moedas']}")
             await enviar_card(interaction_select, embed, nome)
         select.callback = callback
         view = View(timeout=60)
@@ -798,22 +908,21 @@ class TurmaAcoesView(View):
 
     @discord.ui.button(label="Cinnamoroll: Trocar 2 duplicatas 🔄", style=discord.ButtonStyle.primary)
     async def cinnamoroll(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if not tem_efeito(uid, dados, "cinnamoroll"):
+        dados = await get_user_data(self.uid)
+        if not tem_efeito(self.uid, dados, "cinnamoroll"):
             await interaction.response.send_message("Precisa do Cinnamoroll.", ephemeral=True)
             return
         contagem = {}
-        for nome in dados[uid]["personagens"]: contagem[nome] = contagem.get(nome, 0) + 1
+        for nome in dados["personagens"]: contagem[nome] = contagem.get(nome, 0) + 1
         trocaveis = [nome for nome, qtd in contagem.items() if qtd >= 2]
         if not trocaveis:
             await interaction.response.send_message("Sem 2 cópias.", ephemeral=True)
             return
         nome = trocaveis[0]
-        for _ in range(2): dados[uid]["personagens"].remove(nome)
-        novo = sortear_personagem(uid, dados)
-        dados[uid]["personagens"].append(novo["nome"])
-        salvar_dados(dados)
+        for _ in range(2): dados["personagens"].remove(nome)
+        novo = sortear_personagem(self.uid, dados)
+        dados["personagens"].append(novo["nome"])
+        await update_user_data(self.uid, dados)
         embed = discord.Embed(
             title=f"🔄 Troca Cinnamoroll: {PERSONAGENS_EMOJI.get(novo['nome'], '❓')} {novo['nome']}",
             description=f"**Raridade:** {novo['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(novo['efeito'], 'Nenhuma')}\n(2× {nome})",
@@ -823,83 +932,21 @@ class TurmaAcoesView(View):
 
     @discord.ui.button(label="Hangyodon: Reciclar duplicata ♻️", style=discord.ButtonStyle.danger)
     async def hangyodon(self, interaction: discord.Interaction, button: Button):
-        dados = carregar_dados()
-        uid = str(interaction.user.id)
-        if not tem_efeito(uid, dados, "hangyodon"):
+        dados = await get_user_data(self.uid)
+        if not tem_efeito(self.uid, dados, "hangyodon"):
             await interaction.response.send_message("Precisa do Hangyodon.", ephemeral=True)
             return
         contagem = {}
-        for nome in dados[uid]["personagens"]: contagem[nome] = contagem.get(nome, 0) + 1
+        for nome in dados["personagens"]: contagem[nome] = contagem.get(nome, 0) + 1
         dups = [nome for nome, qtd in contagem.items() if qtd > 1]
         if not dups:
             await interaction.response.send_message("Sem duplicatas.", ephemeral=True)
             return
         nome = dups[0]
-        dados[uid]["personagens"].remove(nome)
-        dados[uid]["coracoes"] += 3
-        salvar_dados(dados)
+        dados["personagens"].remove(nome)
+        dados["coracoes"] += 3
+        await update_user_data(self.uid, dados)
         await interaction.response.send_message(f"♻️ {nome} → +3💗", ephemeral=True)
-
-# ---------- Aceitar/Recusar troca ----------
-class AceitarRecusarView(View):
-    def __init__(self, solicitante_id, alvo_id, personagem_oferecido):
-        super().__init__(timeout=120)
-        self.solicitante_id = solicitante_id
-        self.alvo_id = alvo_id
-        self.personagem_oferecido = personagem_oferecido
-
-    @discord.ui.button(label="Aceitar ✅", style=discord.ButtonStyle.success)
-    async def aceitar(self, interaction: discord.Interaction, button: Button):
-        if str(interaction.user.id) != self.alvo_id:
-            await interaction.response.send_message("Não é para você.", ephemeral=True)
-            return
-        dados = carregar_dados()
-        if self.personagem_oferecido not in dados[self.solicitante_id]["personagens"]:
-            await interaction.response.send_message("O amigo não tem mais esse personagem.", ephemeral=True)
-            return
-        personagens_alvo = list(set(dados[self.alvo_id]["personagens"]))
-        if not personagens_alvo:
-            await interaction.response.send_message("Você não tem personagens.", ephemeral=True)
-            return
-        options = [discord.SelectOption(label=f"{nome} {PERSONAGENS_EMOJI.get(nome, '')}", value=nome) for nome in personagens_alvo[:25]]
-        select = Select(placeholder="Oferecer qual?", options=options)
-        async def callback(interaction_select: discord.Interaction):
-            personagem_alvo = select.values[0]
-            dados[self.solicitante_id]["personagens"].remove(self.personagem_oferecido)
-            dados[self.alvo_id]["personagens"].remove(personagem_alvo)
-            dados[self.solicitante_id]["personagens"].append(personagem_alvo)
-            dados[self.alvo_id]["personagens"].append(self.personagem_oferecido)
-            registro = f"{interaction.user.name} deu **{personagem_alvo}** e recebeu **{self.personagem_oferecido}** de <@{self.solicitante_id}>"
-            dados[self.solicitante_id].setdefault("historico_trocas", []).append(registro)
-            dados[self.alvo_id].setdefault("historico_trocas", []).append(registro)
-            dados[self.solicitante_id]["missoes_diarias"]["trocas"] += 1
-            dados[self.solicitante_id]["missoes_semanais"]["trocas"] += 1
-            dados[self.alvo_id]["missoes_diarias"]["trocas"] += 1
-            dados[self.alvo_id]["missoes_semanais"]["trocas"] += 1
-            salvar_dados(dados)
-            trocas_pendentes.pop(self.solicitante_id, None)
-            await interaction_select.response.send_message(f"✅ Troca realizada! {registro}", ephemeral=False)
-            self.disable_all_items()
-            await interaction.message.edit(view=self)
-        select.callback = callback
-        view = View(timeout=60)
-        view.add_item(select)
-        await interaction.response.send_message("Qual personagem oferecer?", view=view, ephemeral=True)
-
-    @discord.ui.button(label="Recusar ❌", style=discord.ButtonStyle.danger)
-    async def recusar(self, interaction: discord.Interaction, button: Button):
-        if str(interaction.user.id) != self.alvo_id:
-            await interaction.response.send_message("Não é para você.", ephemeral=True)
-            return
-        trocas_pendentes.pop(self.solicitante_id, None)
-        self.disable_all_items()
-        await interaction.message.edit(view=self)
-        await interaction.response.send_message("❌ Troca recusada.", ephemeral=True)
-
-    def disable_all_items(self):
-        for item in self.children: item.disabled = True
-
-trocas_pendentes = {}
 
 # ---------- Tutorial/Ajuda ----------
 class TutorialAjudaView(View):
@@ -938,6 +985,7 @@ class TutorialAjudaView(View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # =================== COMANDOS SLASH ===================
+
 @bot.tree.command(name="hellokitty", description="Abre o painel do Hello Kitty Café ☕")
 async def hellokitty(interaction: discord.Interaction):
     embed = discord.Embed(title="☕ Hello Kitty Café 🎀",
@@ -948,36 +996,33 @@ async def hellokitty(interaction: discord.Interaction):
 
 @bot.tree.command(name="perfil", description="Veja seu perfil no Hello Kitty Café")
 async def perfil(interaction: discord.Interaction):
-    dados = carregar_dados()
-    uid = str(interaction.user.id)
-    if uid not in dados:
-        await interaction.response.send_message("Você ainda não tem um perfil. Use /hellokitty para começar!", ephemeral=True)
-        return
-    jogador = dados[uid]
-    unicos = len(set(jogador["personagens"]))
-    nivel = calcular_nivel(jogador.get("xp", 0))
+    dados = await get_user_data(str(interaction.user.id))
+    unicos = len(set(dados["personagens"]))
+    nivel = calcular_nivel(dados.get("xp", 0))
     titulo = TITULOS.get(nivel, "")
     embed = discord.Embed(title=f"🌸 Perfil de {interaction.user.display_name}", color=0xFF69B4)
     embed.add_field(name="Nível", value=f"{nivel} {titulo}")
-    embed.add_field(name="💗 Corações", value=jogador["coracoes"])
-    embed.add_field(name="🍬 Doces", value=jogador.get("doces", 0))
-    embed.add_field(name="🪙 Moedas", value=jogador.get("moedas", 0))
-    embed.add_field(name="✨ Fragmentos Hello", value=jogador["fragmentos"])
+    embed.add_field(name="💗 Corações", value=dados["coracoes"])
+    embed.add_field(name="🍬 Doces", value=dados.get("doces", 0))
+    embed.add_field(name="🪙 Moedas", value=dados.get("moedas", 0))
+    embed.add_field(name="✨ Fragmentos Hello", value=dados["fragmentos"])
     embed.add_field(name="👥 Personagens únicos", value=unicos)
-    embed.add_field(name="🤝 Trocas", value=len(jogador.get("historico_trocas", [])))
-    if jogador.get("conquistas"):
-        embed.add_field(name="🏆 Conquistas", value=", ".join(CONQUISTAS[c]["nome"] for c in jogador["conquistas"] if c in CONQUISTAS), inline=False)
+    embed.add_field(name="🤝 Trocas", value=len(dados.get("historico_trocas", [])))
+    if dados.get("conquistas"):
+        embed.add_field(name="🏆 Conquistas", value=", ".join(CONQUISTAS[c]["nome"] for c in dados["conquistas"] if c in CONQUISTAS), inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="ranking", description="Veja o ranking do servidor")
 async def ranking(interaction: discord.Interaction):
-    dados = carregar_dados()
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch('SELECT id, personagens, coracoes FROM users')
     ranking = []
-    for uid, jogador in dados.items():
+    for row in rows:
         try:
-            member = interaction.guild.get_member(int(uid))
+            member = interaction.guild.get_member(int(row['id']))
             if member:
-                ranking.append((member.display_name, len(set(jogador["personagens"])), jogador["coracoes"]))
+                personagens = json.loads(row['personagens'])
+                ranking.append((member.display_name, len(set(personagens)), row['coracoes']))
         except:
             pass
     ranking.sort(key=lambda x: x[1], reverse=True)
@@ -987,9 +1032,8 @@ async def ranking(interaction: discord.Interaction):
 
 @bot.tree.command(name="listadedesejos", description="Veja sua lista de desejos")
 async def lista_desejos(interaction: discord.Interaction):
-    dados = carregar_dados()
-    uid = str(interaction.user.id)
-    desejos = dados.get(uid, {}).get("lista_desejos", [])
+    dados = await get_user_data(str(interaction.user.id))
+    desejos = dados.get("lista_desejos", [])
     if not desejos:
         await interaction.response.send_message("Sua lista de desejos está vazia. Use /adicionardesejo!", ephemeral=True)
         return
@@ -997,138 +1041,255 @@ async def lista_desejos(interaction: discord.Interaction):
 
 @bot.tree.command(name="adicionardesejo", description="Adicione um personagem à lista de desejos")
 async def adicionar_desejo(interaction: discord.Interaction, personagem: str):
-    dados = carregar_dados()
+    dados = await get_user_data(str(interaction.user.id))
     uid = str(interaction.user.id)
-    if uid not in dados:
-        dados[uid] = novo_jogador()
     if personagem not in [p["nome"] for p in PERSONAGENS]:
         await interaction.response.send_message("Personagem não encontrado.", ephemeral=True)
         return
-    if personagem in dados[uid].get("lista_desejos", []):
+    if personagem in dados.get("lista_desejos", []):
         await interaction.response.send_message("Já está na sua lista de desejos!", ephemeral=True)
         return
-    dados[uid].setdefault("lista_desejos", []).append(personagem)
-    salvar_dados(dados)
+    dados.setdefault("lista_desejos", []).append(personagem)
+    await update_user_data(uid, dados)
     await interaction.response.send_message(f"🌸 {personagem} adicionado à sua lista de desejos!")
+
+@bot.tree.command(name="drop", description="Resgate seu drop a cada 4 horas!")
+async def drop(interaction: discord.Interaction):
+    """Mostra o painel do drop com tempo restante e botão para resgatar."""
+    uid = str(interaction.user.id)
+    dados = await get_user_data(uid)
+    agora = datetime.datetime.now(timezone.utc).timestamp()
+    ultimo = dados.get("ultimo_drop", 0)
+    intervalo = 4 * 3600  # 4 horas
+    restante = intervalo - (agora - ultimo)
+
+    embed = discord.Embed(title="🎁 Drop do Café", color=0xFF69B4)
+    if restante <= 0:
+        embed.description = "**Você pode resgatar seu drop agora!** Clique no botão abaixo."
+        embed.set_footer(text="Disponível!")
+        view = DropView(uid, disponivel=True)
+    else:
+        horas = int(restante // 3600)
+        minutos = int((restante % 3600) // 60)
+        segundos = int(restante % 60)
+        embed.description = f"⏳ Próximo drop disponível em **{horas}h {minutos}m {segundos}s**"
+        embed.set_footer(text="Volte mais tarde!")
+        view = DropView(uid, disponivel=False)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+class DropView(View):
+    def __init__(self, uid, disponivel):
+        super().__init__(timeout=60)
+        self.uid = uid
+        self.disponivel = disponivel
+        if disponivel:
+            self.add_item(Button(label="Resgatar 🎁", style=discord.ButtonStyle.success, custom_id="resgatar_drop"))
+
+    @discord.ui.button(label="Resgatar 🎁", style=discord.ButtonStyle.success, custom_id="resgatar_drop")
+    async def resgatar_drop(self, interaction: discord.Interaction, button: Button):
+        dados = await get_user_data(self.uid)
+        agora = datetime.datetime.now(timezone.utc).timestamp()
+        ultimo = dados.get("ultimo_drop", 0)
+        if agora - ultimo < 4 * 3600:
+            await interaction.response.send_message("⏳ Ainda não passou 4 horas!", ephemeral=True)
+            return
+        # Recompensa aleatória
+        premios = [
+            ("💗", "coracoes", random.randint(3, 8)),
+            ("🍬", "doces", random.randint(2, 5)),
+            ("✨", "fragmentos", random.randint(1, 3)),
+            ("🪙", "moedas", random.randint(5, 15))
+        ]
+        escolha = random.choice(premios)
+        dados[escolha[1]] = dados.get(escolha[1], 0) + escolha[2]
+        dados["ultimo_drop"] = agora
+        await update_user_data(self.uid, dados)
+        embed = discord.Embed(
+            title="🎁 Drop Resgatado!",
+            description=f"Você ganhou **{escolha[2]} {escolha[0]}**!",
+            color=0x2ECC71
+        )
+        embed.set_footer(text=f"Próximo drop em 4 horas.")
+        await interaction.response.edit_message(embed=embed, view=None)
 
 @bot.tree.command(name="minijogo", description="Jogue um minijogo: roleta, memória ou adivinhe")
 @app_commands.choices(jogo=[
     app_commands.Choice(name="Roleta da Sorte", value="roleta"),
-    app_commands.Choice(name="Memória", value="memoria"),
     app_commands.Choice(name="Adivinhe o Personagem", value="adivinhe")
 ])
 async def minijogo(interaction: discord.Interaction, jogo: app_commands.Choice[str]):
     if jogo.value == "roleta":
-        premios = [("💗 5 corações", "coracoes", 5), ("🍬 3 doces", "doces", 3), ("✨ 1 fragmento", "fragmentos", 1), ("🪙 10 moedas", "moedas", 10)]
+        premios = [("💗 5 corações", "coracoes", 5), ("🍬 3 doces", "doces", 3),
+                   ("✨ 1 fragmento", "fragmentos", 1), ("🪙 10 moedas", "moedas", 10)]
         premio = random.choice(premios)
-        dados = carregar_dados()
+        dados = await get_user_data(str(interaction.user.id))
         uid = str(interaction.user.id)
-        if uid not in dados: dados[uid] = novo_jogador()
-        dados[uid][premio[1]] += premio[2]
-        salvar_dados(dados)
+        dados[premio[1]] = dados.get(premio[1], 0) + premio[2]
+        await update_user_data(uid, dados)
         await interaction.response.send_message(f"🎰 **Roleta da Sorte:** Você ganhou {premio[0]}!", ephemeral=False)
-    elif jogo.value == "memoria":
-        await interaction.response.send_message("🧠 Jogo da Memória em breve! Emojis: 🌸🍰☕🎀🐱🦄", ephemeral=True)
-    else:
-        await interaction.response.send_message("❓ Adivinhe o personagem em breve!", ephemeral=True)
+    elif jogo.value == "adivinhe":
+        personagem = random.choice([p for p in PERSONAGENS if p["nome"] != "Nenê"])
+        await interaction.response.send_modal(AdivinheModal(personagem["nome"]))
 
-@bot.tree.command(name="resumodiario", description="Ativar ou desativar o resumo diário por DM")
-async def resumo_diario(interaction: discord.Interaction):
-    dados = carregar_dados()
+class AdivinheModal(Modal, title="Adivinhe o Personagem"):
+    def __init__(self, nome_correto):
+        super().__init__()
+        self.nome_correto = nome_correto
+        self.resposta = TextInput(label="Digite o nome do personagem:", placeholder="Ex: Hello Kitty")
+        self.add_item(self.resposta)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.resposta.value.strip().lower() == self.nome_correto.lower():
+            dados = await get_user_data(str(interaction.user.id))
+            uid = str(interaction.user.id)
+            bonus = random.randint(1, 3)
+            dados["coracoes"] = dados.get("coracoes", 0) + bonus
+            await update_user_data(uid, dados)
+            await interaction.response.send_message(f"🎉 Correto! Você ganhou **{bonus}💗**!", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Errado! O personagem era **{self.nome_correto}**.", ephemeral=True)
+
+@bot.tree.command(name="trocas", description="Veja e responda às solicitações de troca pendentes")
+async def ver_trocas(interaction: discord.Interaction):
     uid = str(interaction.user.id)
-    if uid not in dados: dados[uid] = novo_jogador()
-    atual = dados[uid].get("resumo_dm", False)
-    dados[uid]["resumo_dm"] = not atual
-    salvar_dados(dados)
-    estado = "ativado" if dados[uid]["resumo_dm"] else "desativado"
-    await interaction.response.send_message(f"📬 Resumo diário {estado}!", ephemeral=True)
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch('''
+            SELECT id, solicitante_id, personagem_oferecido, timestamp
+            FROM trocas
+            WHERE alvo_id = $1 AND status = 'pendente'
+            ORDER BY timestamp DESC
+        ''', uid)
+    if not rows:
+        await interaction.response.send_message("Nenhuma solicitação de troca pendente.", ephemeral=True)
+        return
+    embed = discord.Embed(title="📬 Solicitações de Troca", color=0x3498DB)
+    for row in rows:
+        solicitante = await bot.fetch_user(int(row['solicitante_id']))
+        embed.add_field(
+            name=f"De: {solicitante.display_name}",
+            value=f"Oferece: {row['personagem_oferecido']}\nID: {row['id']}",
+            inline=False
+        )
+    embed.set_footer(text="Use /respondertroca <id> para aceitar ou recusar.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="ativaria", description="Ativar a IA da Hello Kitty no servidor (admin)")
-@app_commands.default_permissions(administrator=True)
-async def ativar_ia(interaction: discord.Interaction):
-    config = carregar_config_ia()
-    config[str(interaction.guild.id)] = True
-    salvar_config_ia(config)
-    await interaction.response.send_message("🌸 A IA da Hello Kitty foi **ativada**! Agora ela vai conversar naturalmente no chat. Use /desativaria para desligar.", ephemeral=True)
+@bot.tree.command(name="respondertroca", description="Responda a uma solicitação de troca (aceitar ou recusar)")
+async def responder_troca(interaction: discord.Interaction, id: int, acao: str):
+    uid = str(interaction.user.id)
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow('SELECT * FROM trocas WHERE id = $1 AND alvo_id = $2 AND status = "pendente"', id, uid)
+        if not row:
+            await interaction.response.send_message("Solicitação não encontrada ou já respondida.", ephemeral=True)
+            return
+        if acao.lower() == "recusar":
+            await conn.execute('UPDATE trocas SET status = "recusada" WHERE id = $1', id)
+            await interaction.response.send_message("❌ Troca recusada.", ephemeral=True)
+            return
+        elif acao.lower() == "aceitar":
+            # Buscar personagens do alvo para escolher qual dar
+            dados_alvo = await get_user_data(uid)
+            personagens_alvo = list(set(dados_alvo["personagens"]))
+            if not personagens_alvo:
+                await interaction.response.send_message("Você não tem personagens para trocar.", ephemeral=True)
+                return
+            # Oferecer seleção
+            options = [discord.SelectOption(label=nome, value=nome) for nome in personagens_alvo[:25]]
+            select = Select(placeholder="Escolha o personagem que você dará", options=options)
+            async def select_cb(interaction_select: discord.Interaction):
+                personagem_dado = select.values[0]
+                # Concluir troca
+                solicitante_id = row['solicitante_id']
+                personagem_oferecido = row['personagem_oferecido']
+                dados_solicitante = await get_user_data(solicitante_id)
+                # Verificar se solicitante ainda tem o personagem
+                if personagem_oferecido not in dados_solicitante["personagens"]:
+                    await interaction_select.response.send_message("O solicitante não tem mais esse personagem.", ephemeral=True)
+                    return
+                # Remover e adicionar
+                dados_solicitante["personagens"].remove(personagem_oferecido)
+                dados_solicitante["personagens"].append(personagem_dado)
+                dados_alvo["personagens"].remove(personagem_dado)
+                dados_alvo["personagens"].append(personagem_oferecido)
+                # Registrar histórico
+                registro = f"{interaction.user.name} deu **{personagem_dado}** e recebeu **{personagem_oferecido}** de <@{solicitante_id}>"
+                dados_solicitante.setdefault("historico_trocas", []).append(registro)
+                dados_alvo.setdefault("historico_trocas", []).append(registro)
+                # Atualizar missões
+                dados_solicitante["missoes_diarias"]["trocas"] = dados_solicitante["missoes_diarias"].get("trocas", 0) + 1
+                dados_solicitante["missoes_semanais"]["trocas"] = dados_solicitante["missoes_semanais"].get("trocas", 0) + 1
+                dados_alvo["missoes_diarias"]["trocas"] = dados_alvo["missoes_diarias"].get("trocas", 0) + 1
+                dados_alvo["missoes_semanais"]["trocas"] = dados_alvo["missoes_semanais"].get("trocas", 0) + 1
+                await update_user_data(solicitante_id, dados_solicitante)
+                await update_user_data(uid, dados_alvo)
+                # Marcar troca como concluída
+                async with db_pool.acquire() as conn2:
+                    await conn2.execute('UPDATE trocas SET status = "concluida" WHERE id = $1', id)
+                await interaction_select.response.send_message(f"✅ Troca concluída! {registro}", ephemeral=False)
+                # Notificar solicitante
+                solicitante_user = await bot.fetch_user(int(solicitante_id))
+                await solicitante_user.send(f"✅ Sua troca com {interaction.user.display_name} foi concluída! Você recebeu **{personagem_dado}**.")
+            select.callback = select_cb
+            view = View(timeout=60)
+            view.add_item(select)
+            await interaction.response.send_message("Escolha o personagem que você dará:", view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message("Ação inválida. Use 'aceitar' ou 'recusar'.", ephemeral=True)
 
-@bot.tree.command(name="desativaria", description="Desativar a IA da Hello Kitty no servidor (admin)")
-@app_commands.default_permissions(administrator=True)
-async def desativar_ia(interaction: discord.Interaction):
-    config = carregar_config_ia()
-    config[str(interaction.guild.id)] = False
-    salvar_config_ia(config)
-    await interaction.response.send_message("🌸 A IA da Hello Kitty foi **desativada**.", ephemeral=True)
+# ---------- Comandos de IA ----------
+@bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
+async def historinha(interaction: discord.Interaction):
+    if not cliente_ia:
+        await interaction.response.send_message("💔 IA não disponível.", ephemeral=True)
+        return
+    dados = await get_user_data(str(interaction.user.id))
+    personagens = dados.get("personagens", [])
+    if not personagens:
+        await interaction.response.send_message("Você ainda não tem personagens!", ephemeral=True)
+        return
+    await interaction.response.defer()
+    try:
+        prompt = f"Crie uma historinha curta e fofa (máximo 100 palavras) com os seguintes personagens: {', '.join(set(personagens[:5]))}. A Hello Kitty é a anfitriã do café."
+        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
+        texto = response.text[:1500]  # Limitar tamanho
+        await interaction.followup.send(f"📖 {texto}")
+    except Exception as e:
+        logging.error(f"Erro na historinha: {e}")
+        await interaction.followup.send("🌸 Ops! A Hello Kitty está com preguiça de escrever hoje... tente de novo mais tarde. 😿")
 
 @bot.tree.command(name="conversar", description="Fale com a Hello Kitty! (modo alternativo)")
 async def conversar(interaction: discord.Interaction, mensagem: str):
-    config = carregar_config_ia()
-    if not config.get(str(interaction.guild.id), False):
-        await interaction.response.send_message("🌸 A IA está desativada neste servidor. Peça a um admin para usar /ativaria.", ephemeral=True)
-        return
     if not cliente_ia:
-        await interaction.response.send_message("💔 A IA não está configurada (chave da API ausente).", ephemeral=True)
+        await interaction.response.send_message("💔 IA não disponível.", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=False)
+    await interaction.response.defer()
     try:
         prompt = f"""Você é a Hello Kitty, uma gatinha meiga e amigável do universo Sanrio.
         Você está no servidor do Discord "Hello Kitty Café", um joguinho de colecionar personagens.
         Responda de forma fofa, animada e ajude o jogador com dicas sobre o jogo (como conseguir corações, doces, fragmentos, trocar com amigos).
         Mensagem do jogador: {mensagem}"""
         response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
-        texto = response.text
+        texto = response.text[:1800]
         await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
     except Exception as e:
-        print(f"Erro na IA: {e}")
+        logging.error(f"Erro na IA: {e}")
         await interaction.followup.send("🌸 Ops! A Hello Kitty está descansando... tente de novo mais tarde. 😿")
 
-@bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
-async def historinha(interaction: discord.Interaction):
-    if not cliente_ia:
-        await interaction.response.send_message("💔 IA não disponível.", ephemeral=True)
-        return
-    dados = carregar_dados()
-    uid = str(interaction.user.id)
-    personagens = dados.get(uid, {}).get("personagens", [])
-    if not personagens:
-        await interaction.response.send_message("Você ainda não tem personagens!", ephemeral=True)
-        return
-    await interaction.response.defer()
-    try:
-        prompt = f"Crie uma historinha curta e fofa com os seguintes personagens: {', '.join(set(personagens))}. A Hello Kitty é a anfitriã do café."
-        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
-        await interaction.followup.send(f"📖 {response.text}")
-    except Exception as e:
-        print(f"Erro na historinha: {e}")
-        await interaction.followup.send("Erro ao criar historinha.")
+# =================== EVENTOS ===================
 
-@bot.tree.command(name="casamento", description="Una dois personagens especiais para ganhar um bônus!")
-async def casamento(interaction: discord.Interaction, personagem1: str, personagem2: str):
-    dados = carregar_dados()
-    uid = str(interaction.user.id)
-    if uid not in dados: dados[uid] = novo_jogador()
-    p1 = next((p for p in PERSONAGENS if p["nome"].lower() == personagem1.lower()), None)
-    p2 = next((p for p in PERSONAGENS if p["nome"].lower() == personagem2.lower()), None)
-    if not p1 or not p2:
-        await interaction.response.send_message("Personagem não encontrado.", ephemeral=True)
-        return
-    if personagem1.lower() == personagem2.lower():
-        await interaction.response.send_message("Escolha dois personagens diferentes.", ephemeral=True)
-        return
-    if p1["nome"] not in dados[uid]["personagens"] or p2["nome"] not in dados[uid]["personagens"]:
-        await interaction.response.send_message("Você não possui um desses personagens.", ephemeral=True)
-        return
-    casais = {("hello kitty", "dear daniel"): {"coracoes": 20, "doces": 10}}
-    chave = tuple(sorted([p1["nome"].lower(), p2["nome"].lower()]))
-    if chave in casais:
-        recomp = casais[chave]
-        for k, v in recomp.items():
-            dados[uid][k] = dados[uid].get(k, 0) + v
-        salvar_dados(dados)
-        await interaction.response.send_message(f"💒 Casamento especial de {p1['nome']} e {p2['nome']}! Você ganhou {recomp}!")
+@bot.event
+async def on_ready():
+    print(f"🌸 {bot.user} está no Hello Kitty Café!")
+    await init_db()
+    bot.add_view(MenuPrincipal())
+    if GUILD_ID:
+        guild = discord.Object(id=int(GUILD_ID))
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
     else:
-        await interaction.response.send_message("Esses dois não formam um casal especial, mas são amigos fofos!")
+        await bot.tree.sync()
+    logging.info("Bot pronto!")
 
-# =================== RESPOSTA NATURAL DA IA (CORRIGIDA) ===================
+# ---------- Processamento de mensagens (XP, efeitos, etc.) ----------
 ia_cooldowns = {}
 ia_falhas_consecutivas = defaultdict(int)
 
@@ -1137,94 +1298,86 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # --- Jogo (dados, XP, missões, etc.) ---
-    dados = carregar_dados()
     uid = str(message.author.id)
-    if uid not in dados:
-        dados[uid] = novo_jogador()
+    dados = await get_user_data(uid)
 
-    jogador = dados[uid]
-    jogador["msg_count"] += 1
-    mensagens = jogador["msg_count"]
+    # Atualizar contagem de mensagens
+    dados["msg_count"] += 1
+    mensagens = dados["msg_count"]
 
     # XP e nível
-    jogador["xp"] = jogador.get("xp", 0) + 1
-    nivel_antigo = calcular_nivel(jogador["xp"] - 1)
-    nivel_novo = calcular_nivel(jogador["xp"])
+    dados["xp"] = dados.get("xp", 0) + 1
+    nivel_antigo = calcular_nivel(dados["xp"] - 1)
+    nivel_novo = calcular_nivel(dados["xp"])
     if nivel_novo > nivel_antigo:
         recomp = recompensa_nivel(nivel_novo)
         for k, v in recomp.items():
-            jogador[k] = jogador.get(k, 0) + v
+            dados[k] = dados.get(k, 0) + v
         await notificar_meta(uid, f"nivel_{nivel_novo}", f"🎉 Você subiu para o nível {nivel_novo}! {TITULOS.get(nivel_novo, '')}\nRecompensas: {recomp}")
 
     # Missões
     agora = datetime.datetime.now(timezone.utc).timestamp()
-    if "ultima_reset_diaria" not in jogador or agora - jogador["ultima_reset_diaria"] > 86400:
-        resetar_missoes_diarias(uid, dados)
-    if "ultima_reset_semanal" not in jogador or agora - jogador["ultima_reset_semanal"] > 604800:
-        resetar_missoes_semanais(uid, dados)
+    if "ultima_reset_diaria" not in dados or agora - dados.get("ultima_reset_diaria", 0) > 86400:
+        resetar_missoes_diarias(dados)
+    if "ultima_reset_semanal" not in dados or agora - dados.get("ultima_reset_semanal", 0) > 604800:
+        resetar_missoes_semanais(dados)
 
-    if "mensagens" in jogador.get("missoes_diarias", {}):
-        jogador["missoes_diarias"]["mensagens"] += 1
-    if "mensagens" in jogador.get("missoes_semanais", {}):
-        jogador["missoes_semanais"]["mensagens"] += 1
+    if "mensagens" in dados.get("missoes_diarias", {}):
+        dados["missoes_diarias"]["mensagens"] += 1
+    if "mensagens" in dados.get("missoes_semanais", {}):
+        dados["missoes_semanais"]["mensagens"] += 1
 
     # Efeitos de mensagem
     if tem_efeito(uid, dados, "dear_daniel") and mensagens % 50 == 0:
-        jogador["coracoes"] += 1
+        dados["coracoes"] += 1
         await notificar_meta(uid, f"daniel_{mensagens}", f"📬 Dear Daniel te enviou +1💗! ({mensagens} msgs)")
     if tem_efeito(uid, dados, "twin_stars") and mensagens % 10 == 0:
-        jogador["coracoes"] += 1
+        dados["coracoes"] += 1
         await notificar_meta(uid, f"twin_{mensagens}", f"⭐ Little Twin Stars: +1💗! ({mensagens} msgs)")
     if tem_efeito(uid, dados, "nene") and mensagens % 5 == 0:
-        jogador["coracoes"] += 3
+        dados["coracoes"] += 3
         await notificar_meta(uid, f"nene_{mensagens}", f"💫 Nenê radiante: +3💗! ({mensagens} msgs)")
     if tem_efeito(uid, dados, "pipi") and mensagens % 80 == 0:
-        jogador["coracoes"] += 1
+        dados["coracoes"] += 1
         await notificar_meta(uid, f"pipi_{mensagens}", f"🐤 Pipi: +1💗! ({mensagens} msgs)")
     if tem_efeito(uid, dados, "mocha") and mensagens % 60 == 0:
-        jogador["coracoes"] += 1
+        dados["coracoes"] += 1
         await notificar_meta(uid, f"mocha_{mensagens}", f"🐶 Mocha: +1💗! ({mensagens} msgs)")
 
     ganho = calcular_coracoes_msg(uid, dados, mensagens)
-    jogador["coracoes"] += ganho
-    jogador["coracoes_ganhos"] += ganho
+    dados["coracoes"] += ganho
+    dados["coracoes_ganhos"] += ganho
 
-    if tem_efeito(uid, dados, "pochacco") and jogador["coracoes_ganhos"] >= 20:
-        jogador["coracoes"] += 1
-        jogador["coracoes_ganhos"] -= 20
+    if tem_efeito(uid, dados, "pochacco") and dados["coracoes_ganhos"] >= 20:
+        dados["coracoes"] += 1
+        dados["coracoes_ganhos"] -= 20
 
     if tem_efeito(uid, dados, "george") and mensagens % 100 == 0:
-        jogador["fragmentos"] += 1
+        dados["fragmentos"] += 1
         await notificar_meta(uid, f"george_{mensagens}", f"🐵 George: +1 fragmento Hello! ({mensagens} msgs)")
     if tem_efeito(uid, dados, "sasa") and mensagens % 50 == 0:
-        jogador["fragmentos"] += 1
+        dados["fragmentos"] += 1
         await notificar_meta(uid, f"sasa_{mensagens}", f"🐱 Sasa: +1 fragmento Hello! ({mensagens} msgs)")
 
     # Verificar conclusão de missões
     for missao in MISSOES_DIARIAS:
-        if jogador["missoes_diarias"].get(missao["id"], 0) >= missao["meta"] and f"diaria_{missao['id']}" not in jogador.get("missoes_concluidas", []):
-            jogador.setdefault("missoes_concluidas", []).append(f"diaria_{missao['id']}")
+        if dados["missoes_diarias"].get(missao["id"], 0) >= missao["meta"] and f"diaria_{missao['id']}" not in dados.get("missoes_concluidas", []):
+            dados.setdefault("missoes_concluidas", []).append(f"diaria_{missao['id']}")
             for k, v in missao["recompensa"].items():
-                jogador[k] = jogador.get(k, 0) + v
+                dados[k] = dados.get(k, 0) + v
             await notificar_meta(uid, f"missao_{missao['id']}", f"✅ Missão diária concluída: {missao['desc']}! Recompensa: {missao['recompensa']}")
 
     for missao in MISSOES_SEMANAIS:
-        if jogador["missoes_semanais"].get(missao["id"], 0) >= missao["meta"] and f"semanal_{missao['id']}" not in jogador.get("missoes_concluidas", []):
-            jogador.setdefault("missoes_concluidas", []).append(f"semanal_{missao['id']}")
+        if dados["missoes_semanais"].get(missao["id"], 0) >= missao["meta"] and f"semanal_{missao['id']}" not in dados.get("missoes_concluidas", []):
+            dados.setdefault("missoes_concluidas", []).append(f"semanal_{missao['id']}")
             for k, v in missao["recompensa"].items():
-                jogador[k] = jogador.get(k, 0) + v
+                dados[k] = dados.get(k, 0) + v
             await notificar_meta(uid, f"missaos_{missao['id']}", f"✅ Missão semanal concluída: {missao['desc']}! Recompensa: {missao['recompensa']}")
 
-    salvar_dados(dados)
+    await update_user_data(uid, dados)
 
-    # --- RESPOSTA NATURAL DA IA ---
+    # ---------- Resposta natural da IA ----------
     if not cliente_ia:
-        await bot.process_commands(message)
-        return
-
-    config = carregar_config_ia()
-    if not config.get(str(message.guild.id), False):
         await bot.process_commands(message)
         return
 
@@ -1256,34 +1409,27 @@ Mensagem recebida: {message.content}"""
         ia_falhas_consecutivas[canal_id] += 1
         erro_str = str(e)
         if "RESOURCE_EXHAUSTED" not in erro_str and "quota" not in erro_str.lower():
-            print(f"Erro na IA: {erro_str[:150]}")
+            logging.error(f"Erro na IA: {erro_str[:150]}")
 
     await bot.process_commands(message)
 
-# ---------- Tarefas ----------
+# =================== TAREFAS ===================
 @tasks.loop(hours=24)
 async def enviar_resumos_diarios():
-    dados = carregar_dados()
-    for uid, jogador in dados.items():
-        if jogador.get("resumo_dm", False):
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch('SELECT id, resumo_dm, coracoes, doces, moedas FROM users')
+    for row in rows:
+        if row['resumo_dm']:
             try:
-                user = await bot.fetch_user(int(uid))
-                msg = f"🌸 **Resumo Diário do Café**\n💗 Corações: {jogador['coracoes']}\n🍬 Doces: {jogador.get('doces',0)}\n🪙 Moedas: {jogador.get('moedas',0)}\nTenha um dia fofo!"
+                user = await bot.fetch_user(int(row['id']))
+                msg = f"🌸 **Resumo Diário do Café**\n💗 Corações: {row['coracoes']}\n🍬 Doces: {row['doces']}\n🪙 Moedas: {row['moedas']}\nTenha um dia fofo!"
                 await user.send(msg)
             except:
                 pass
 
-@bot.event
-async def on_ready():
-    print(f"🌸 {bot.user} está no Hello Kitty Café!")
-    bot.add_view(MenuPrincipal())
-    if GUILD_ID:
-        guild = discord.Object(id=int(GUILD_ID))
-        bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
-    else:
-        await bot.tree.sync()
-    enviar_resumos_diarios.start()
-
+# =================== INICIALIZAÇÃO ===================
 if __name__ == "__main__":
+    if not DATABASE_URL:
+        logging.error("DATABASE_URL não definida.")
+        exit(1)
     bot.run(TOKEN)
