@@ -791,7 +791,7 @@ class AceitarRecusarTrocaView(View):
             if self.personagem_oferecido not in dados_solicitante["personagens"]:
                 await interaction_select.response.send_message("O solicitante não possui mais esse personagem.", ephemeral=True)
                 async with db_pool.acquire() as conn2:
-                    await conn2.execute('UPDATE trocas SET status = "cancelada" WHERE id = $1', self.trade_id)
+                    await conn2.execute('UPDATE trocas SET status = $1 WHERE id = $2', 'cancelada', self.trade_id)
                 self.disable_all_items()
                 await interaction.message.edit(view=self)
                 return
@@ -827,7 +827,7 @@ class AceitarRecusarTrocaView(View):
             await update_user_data(self.alvo_id, dados_alvo_final)
 
             async with db_pool.acquire() as conn2:
-                await conn2.execute('UPDATE trocas SET status = "concluida" WHERE id = $1', self.trade_id)
+                await conn2.execute('UPDATE trocas SET status = $1 WHERE id = $2', 'concluida', self.trade_id)
 
             self.disable_all_items()
             embed = interaction.message.embeds[0]
@@ -855,7 +855,7 @@ class AceitarRecusarTrocaView(View):
             return
 
         async with db_pool.acquire() as conn:
-            await conn.execute('UPDATE trocas SET status = "recusada" WHERE id = $1', self.trade_id)
+            await conn.execute('UPDATE trocas SET status = $1 WHERE id = $2', 'recusada', self.trade_id)
 
         self.disable_all_items()
         embed = interaction.message.embeds[0]
