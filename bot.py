@@ -14,11 +14,14 @@ from collections import defaultdict
 
 # =================== CONFIGURAÇÕES ===================
 TOKEN = os.getenv("TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL no Railway
+DATABASE_URL = os.getenv("DATABASE_URL")
 GUILD_ID = os.getenv("GUILD_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 logging.basicConfig(level=logging.INFO)
+
+# =================== CONTROLE DA IA ===================
+ia_ativa = True  # Começa ligada
 
 # =================== BANCO DE DADOS ===================
 db_pool = None
@@ -124,7 +127,7 @@ async def update_user_data(user_id, data):
            data['resumo_dm'], data['ultimo_drop'], json.dumps(data['personagens']),
            json.dumps(data['historico_trocas']), user_id)
 
-# =================== IA (Gemini) – CORRIGIDO ===================
+# =================== IA (Gemini) ===================
 import google.generativeai as genai
 
 cliente_ia = None
@@ -1153,13 +1156,12 @@ async def drop(interaction: discord.Interaction):
 
 class DropView(View):
     def __init__(self, uid, disponivel):
-        super().__init__(timeout=300)  # 5 minutos para evitar expiração precoce
+        super().__init__(timeout=300)
         self.uid = uid
         self.disponivel = disponivel
 
     @discord.ui.button(label="Resgatar 🎁", style=discord.ButtonStyle.success, custom_id="resgatar_drop")
     async def resgatar_drop(self, interaction: discord.Interaction, button: Button):
-        # Desabilitar o botão imediatamente para evitar duplo clique
         button.disabled = True
         await interaction.response.edit_message(view=self)
 
@@ -1169,7 +1171,6 @@ class DropView(View):
 
         if agora - ultimo < 4 * 3600:
             await interaction.followup.send("⏳ Ainda não passou 4 horas desde seu último drop!", ephemeral=True)
-            # Reabilitar o botão? Melhor deixar desabilitado para não gerar confusão.
             return
 
         premios = [
@@ -1227,6 +1228,19 @@ class AdivinheModal(Modal, title="Adivinhe o Personagem"):
             await interaction.response.send_message(f"🎉 Correto! Você ganhou **{bonus}💗**!", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Errado! O personagem era **{self.nome_correto}**.", ephemeral=True)
+
+# ---------- 🆕 COMANDOS PARA ATIVAR/DESATIVAR A IA ----------
+@bot.tree.command(name="ativar_ia", description="Ativa a resposta automática da Hello Kitty nas mensagens")
+async def ativar_ia(interaction: discord.Interaction):
+    global ia_ativa
+    ia_ativa = True
+    await interaction.response.send_message("🌸 **Hello Kitty ativada!** Agora ela vai responder automaticamente às mensagens do canal.", ephemeral=True)
+
+@bot.tree.command(name="desativar_ia", description="Desativa a resposta automática da Hello Kitty nas mensagens")
+async def desativar_ia(interaction: discord.Interaction):
+    global ia_ativa
+    ia_ativa = False
+    await interaction.response.send_message("🌸 **Hello Kitty desativada!** Ela não vai mais responder automaticamente.", ephemeral=True)
 
 # ---------- Comandos de IA ----------
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
@@ -1378,8 +1392,8 @@ async def on_message(message):
 
     await update_user_data(uid, dados)
 
-    # ---------- Resposta natural da IA ----------
-    if not cliente_ia:
+    # ---------- Resposta natural da IA (somente se estiver ativa) ----------
+    if not ia_ativa or not cliente_ia:
         await bot.process_commands(message)
         return
 
