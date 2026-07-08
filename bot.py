@@ -7,10 +7,9 @@ import json
 import os
 
 # =================== CONFIGURAÇÕES POR VARIÁVEIS DE AMBIENTE ===================
-TOKEN = os.getenv("TOKEN")
-CANAL_ID = int(os.getenv("CANAL_ID"))                 # ID do canal onde o painel aparecerá
-ARQUIVO_DADOS = os.getenv("DATA_PATH", "lacos.json") # Caminho do arquivo de dados
-GUILD_ID = os.getenv("GUILD_ID")                     # ID do servidor para sync rápido (opcional)
+TOKEN = os.getenv("TOKEN")                             # Token do bot (obrigatório)
+ARQUIVO_DADOS = os.getenv("DATA_PATH", "lacos.json")   # Caminho do arquivo de dados
+GUILD_ID = os.getenv("GUILD_ID")                       # ID do servidor para sync rápido (opcional)
 # ==============================================================================
 
 intents = discord.Intents.default()
