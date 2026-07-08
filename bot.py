@@ -68,6 +68,7 @@ PERSONAGENS_EMOJI = {
     "Mocha": "🐶"
 }
 
+# Mapeamento de imagens locais (nomes em minúsculo)
 IMAGENS_LOCAIS = {
     "Hello Kitty": "hellokitty.png",
     "My Melody": "mymelody.png",
@@ -241,25 +242,22 @@ def novo_jogador():
         "historico_trocas": []
     }
 
-# ---------- Criação de card de personagem GRANDE ----------
-def criar_card_personagem(nome_personagem, raridade, efeito, extras=""):
-    emoji = PERSONAGENS_EMOJI.get(nome_personagem, "❓")
-    cor = CORES_RARIDADE.get(raridade, 0xFFB6C1)
-    embed = discord.Embed(
-        title=f"{emoji} {nome_personagem}",
-        description=f"**Raridade:** {raridade}\n**Habilidade:** {EFEITOS_DESC.get(efeito, 'Nenhuma')}{extras}",
-        color=cor
-    )
-    return embed
-
-async def enviar_card(interaction, embed, nome_personagem, ephemeral=False):
-    """Envia embed com IMAGEM GRANDE (set_image)."""
-    arquivo = None
+# ---------- Função para preparar embed com imagem local ----------
+def preparar_embed_com_imagem(embed, nome_personagem):
+    """Adiciona a imagem ao embed se existir localmente; retorna o arquivo ou None."""
     if nome_personagem in IMAGENS_LOCAIS:
         caminho = IMAGENS_LOCAIS[nome_personagem]
         if os.path.exists(caminho):
             arquivo = discord.File(caminho, filename=caminho)
             embed.set_image(url=f"attachment://{caminho}")
+            return arquivo
+        else:
+            print(f"⚠️ Imagem não encontrada: {caminho}")
+    return None
+
+async def enviar_card(interaction, embed, nome_personagem, ephemeral=False):
+    """Envia o embed com a imagem (se disponível)."""
+    arquivo = preparar_embed_com_imagem(embed, nome_personagem)
     if arquivo:
         await interaction.response.send_message(embed=embed, file=arquivo, ephemeral=ephemeral)
     else:
@@ -287,7 +285,11 @@ class MenuPrincipal(View):
         if random.random() < 1e-11:
             dados[uid]["personagens"].append("Nenê")
             salvar_dados(dados)
-            embed = criar_card_personagem("Nenê", "Ultimate", "nene", "\n🌟 **A Ultimate apareceu!**")
+            embed = discord.Embed(
+                title="💫 Nenê",
+                description="**Raridade:** Ultimate\n**Habilidade:** " + EFEITOS_DESC["nene"],
+                color=CORES_RARIDADE["Ultimate"]
+            )
             await enviar_card(interaction, embed, "Nenê")
             return
 
@@ -301,16 +303,19 @@ class MenuPrincipal(View):
         if duplicar:
             dados[uid]["personagens"].append(personagem["nome"])
 
+        # Fragmentos Hello Kitty
         if personagem["nome"] == "Hello Kitty":
             frags = random.randint(1, 5)
             dados[uid]["fragmentos"] += frags
 
+        # Efeitos de fragmentos extras
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.10: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "rory") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
 
+        # Reembolso
         reembolso = False
         if tem_efeito(uid, dados, "my_melody") and random.random() < 0.10: reembolso = True
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.20: reembolso = True
@@ -320,11 +325,13 @@ class MenuPrincipal(View):
         if reembolso and not gratis:
             dados[uid]["coracoes"] += 1
 
+        # Bônus de corações
         if tem_efeito(uid, dados, "badtz_maru"): dados[uid]["coracoes"] += 5
         if tem_efeito(uid, dados, "sugar") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "lala") and random.random() < 0.10: dados[uid]["coracoes"] += 1
 
+        # Efeitos de entrada dos comuns
         if personagem["nome"] == "Charmmy Kitty":
             dados[uid]["coracoes"] += 1
         if personagem["nome"] == "Tiny Chum":
@@ -337,7 +344,11 @@ class MenuPrincipal(View):
         if duplicar: extras += "\n🐱 Amigo duplicado!"
         if reembolso: extras += "\n💖 Coração devolvido!"
 
-        embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], extras)
+        embed = discord.Embed(
+            title=f"{PERSONAGENS_EMOJI.get(personagem['nome'], '❓')} {personagem['nome']}",
+            description=f"**Raridade:** {personagem['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(personagem['efeito'], 'Nenhuma')}{extras}",
+            color=CORES_RARIDADE.get(personagem['raridade'], 0xFFB6C1)
+        )
         embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
         await enviar_card(interaction, embed, personagem["nome"])
 
@@ -371,12 +382,19 @@ class MenuPrincipal(View):
         chars = sorted(PERSONAGENS, key=lambda x: ordem.get(x["raridade"], 99))
         embeds = []
         for p in chars:
-            embed = criar_card_personagem(p["nome"], p["raridade"], p["efeito"])
+            embed = discord.Embed(
+                title=f"{PERSONAGENS_EMOJI.get(p['nome'], '❓')} {p['nome']}",
+                description=f"**Raridade:** {p['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(p['efeito'], 'Nenhuma')}",
+                color=CORES_RARIDADE.get(p['raridade'], 0xFFB6C1)
+            )
+            # Adiciona imagem apenas se existir
             if p["nome"] in IMAGENS_LOCAIS:
                 caminho = IMAGENS_LOCAIS[p["nome"]]
                 if os.path.exists(caminho):
                     embed.set_image(url=f"attachment://{caminho}")
+                # Não adiciona se não existir
             embeds.append(embed)
+
         if embeds:
             view = CardsPaginaView(embeds, 0)
             await view.enviar(interaction, ephemeral=True)
@@ -490,7 +508,11 @@ class LojaCafeView(View):
         personagem = sortear_personagem(uid, dados, cupom_raridade=True)
         dados[uid]["personagens"].append(personagem["nome"])
         salvar_dados(dados)
-        embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], "\n🍀 **Cupom da Sorte utilizado!**")
+        embed = discord.Embed(
+            title=f"{PERSONAGENS_EMOJI.get(personagem['nome'], '❓')} {personagem['nome']}",
+            description=f"**Raridade:** {personagem['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(personagem['efeito'], 'Nenhuma')}\n🍀 **Cupom da Sorte!**",
+            color=CORES_RARIDADE.get(personagem['raridade'], 0xFFB6C1)
+        )
         await enviar_card(interaction, embed, personagem["nome"])
 
     @discord.ui.button(label="Resgatar Hello Kitty (100 frags) 👑", style=discord.ButtonStyle.danger)
@@ -505,7 +527,11 @@ class LojaCafeView(View):
         bonus = random.randint(1,5)
         dados[uid]["fragmentos"] += bonus
         salvar_dados(dados)
-        embed = criar_card_personagem("Hello Kitty", "Mítico", "hello_kitty", f"\n👑 Resgatada! +{bonus} fragmentos extras.")
+        embed = discord.Embed(
+            title="👑 Hello Kitty",
+            description=f"**Raridade:** Mítico\n**Habilidade:** {EFEITOS_DESC['hello_kitty']}\n👑 Resgatada! +{bonus} fragmentos extras.",
+            color=CORES_RARIDADE["Mítico"]
+        )
         await enviar_card(interaction, embed, "Hello Kitty")
 
     @discord.ui.button(label="Loja de Moedas 🪙", style=discord.ButtonStyle.secondary)
@@ -537,7 +563,11 @@ class LojaCafeView(View):
             dados[uid]["moedas"] -= preco
             dados[uid]["personagens"].append(nome)
             salvar_dados(dados)
-            embed = criar_card_personagem(nome, p["raridade"], p["efeito"], f"\n💰 Comprado por {preco}🪙")
+            embed = discord.Embed(
+                title=f"{PERSONAGENS_EMOJI.get(nome, '❓')} {nome}",
+                description=f"**Raridade:** {p['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(p['efeito'], 'Nenhuma')}\n💰 Comprado por {preco}🪙",
+                color=CORES_RARIDADE.get(p['raridade'], 0xFFB6C1)
+            )
             embed.set_footer(text=f"Saldo restante: {dados[uid]['moedas']}🪙")
             await enviar_card(interaction_select, embed, nome)
         select.callback = callback
@@ -647,7 +677,11 @@ class TurmaAcoesView(View):
             dados[uid]["personagens"].remove(nome)
             dados[uid]["moedas"] = dados[uid].get("moedas", 0) + valor
             salvar_dados(dados)
-            embed = criar_card_personagem(nome, raridade, next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None), f"\n💰 Vendido por {valor}🪙")
+            embed = discord.Embed(
+                title=f"💰 Venda: {PERSONAGENS_EMOJI.get(nome, '❓')} {nome}",
+                description=f"**Raridade:** {raridade}\nValor: **{valor}🪙**",
+                color=CORES_RARIDADE.get(raridade, 0xFFB6C1)
+            )
             embed.set_footer(text=f"Total de moedas: {dados[uid]['moedas']}")
             await enviar_card(interaction_select, embed, nome)
         select.callback = callback
@@ -673,7 +707,11 @@ class TurmaAcoesView(View):
         novo = sortear_personagem(uid, dados)
         dados[uid]["personagens"].append(novo["nome"])
         salvar_dados(dados)
-        embed = criar_card_personagem(novo["nome"], novo["raridade"], novo["efeito"], f"\n🔄 Trocou 2× {nome}")
+        embed = discord.Embed(
+            title=f"🔄 Troca Cinnamoroll: {PERSONAGENS_EMOJI.get(novo['nome'], '❓')} {novo['nome']}",
+            description=f"**Raridade:** {novo['raridade']}\n**Habilidade:** {EFEITOS_DESC.get(novo['efeito'], 'Nenhuma')}\n(2× {nome})",
+            color=CORES_RARIDADE.get(novo['raridade'], 0xFFB6C1)
+        )
         await enviar_card(interaction, embed, novo["nome"])
 
     @discord.ui.button(label="Hangyodon: Reciclar duplicata ♻️", style=discord.ButtonStyle.danger)
