@@ -8,7 +8,6 @@ import os
 import datetime
 from datetime import timezone
 import asyncio
-import warnings
 import google.genai as genai
 from collections import defaultdict
 
@@ -22,7 +21,7 @@ ARQUIVO_IA = "ia_config.json"
 
 # Configurar Gemini (nova SDK)
 cliente_ia = None
-MODELO_IA = "gemini-2.0-flash"  # modelo mais recente e compatível
+MODELO_IA = "gemini-1.5-flash"  # modelo com cota gratuita
 if GEMINI_API_KEY:
     cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -1125,15 +1124,16 @@ async def casamento(interaction: discord.Interaction, personagem1: str, personag
     else:
         await interaction.response.send_message("Esses dois não formam um casal especial, mas são amigos fofos!")
 
-# =================== RESPOSTA NATURAL DA IA ===================
+# =================== RESPOSTA NATURAL DA IA (CORRIGIDA) ===================
 ia_cooldowns = {}
+ia_falhas_consecutivas = defaultdict(int)
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # Jogo (dados)
+    # --- Jogo (dados, XP, missões, etc.) ---
     dados = carregar_dados()
     uid = str(message.author.id)
     if uid not in dados:
@@ -1224,27 +1224,35 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    # Cooldown por canal (10 segundos)
-    canal_id = message.channel.id
-    if canal_id in ia_cooldowns and datetime.datetime.now(timezone.utc).timestamp() - ia_cooldowns[canal_id] < 10:
+    if ia_falhas_consecutivas[message.channel.id] >= 3:
         await bot.process_commands(message)
         return
 
-    ia_cooldowns[canal_id] = datetime.datetime.now(timezone.utc).timestamp()
+    canal_id = message.channel.id
+    agora_ts = datetime.datetime.now(timezone.utc).timestamp()
+    if canal_id in ia_cooldowns and agora_ts - ia_cooldowns[canal_id] < 30:
+        await bot.process_commands(message)
+        return
+
+    ia_cooldowns[canal_id] = agora_ts
 
     try:
         prompt = f"""Você é a Hello Kitty, uma gatinha meiga e amigável do universo Sanrio.
 Você está em um chat do Discord no servidor "Hello Kitty Café", um joguinho de colecionar personagens.
 Converse naturalmente com os membros, dê dicas fofas sobre o jogo, e mantenha um tom animado.
-Responda em português, de forma curta e amigável.
+Responda em português, de forma curta e amigável (máximo 2 frases).
 Mensagem recebida: {message.content}"""
         response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
         texto = response.text
         if len(texto) > 2000:
             texto = texto[:1997] + "..."
         await message.channel.send(f"🌸 {texto}")
+        ia_falhas_consecutivas[canal_id] = 0
     except Exception as e:
-        print(f"Erro na resposta natural da IA: {e}")
+        ia_falhas_consecutivas[canal_id] += 1
+        erro_str = str(e)
+        if "RESOURCE_EXHAUSTED" not in erro_str and "quota" not in erro_str.lower():
+            print(f"Erro na IA: {erro_str[:150]}")
 
     await bot.process_commands(message)
 
