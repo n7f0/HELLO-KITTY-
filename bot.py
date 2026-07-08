@@ -29,7 +29,7 @@ def salvar_dados(dados):
     with open(ARQUIVO_DADOS, "w", encoding="utf-8") as f:
         json.dump(dados, f, indent=4, ensure_ascii=False)
 
-# ---------- Emojis e imagens locais ----------
+# ---------- Emojis, imagens e cores ----------
 PERSONAGENS_EMOJI = {
     "Nenê": "💫",
     "Hello Kitty": "👧",
@@ -68,7 +68,6 @@ PERSONAGENS_EMOJI = {
     "Mocha": "🐶"
 }
 
-# Imagens locais (coloque os arquivos .png na mesma pasta do bot)
 IMAGENS_LOCAIS = {
     "Hello Kitty": "hellokitty.png",
     "My Melody": "mymelody.png",
@@ -77,10 +76,19 @@ IMAGENS_LOCAIS = {
     "Pompompurin": "pompompurin.png"
 }
 
-# Arquivo de imagem da loja
 LOJA_IMAGEM = "loja.png"
 
-# ---------- Efeitos descritos ----------
+CORES_RARIDADE = {
+    "Ultimate": 0xFFD700,
+    "Mítico": 0xFF69B4,
+    "Lendário": 0x9B59B6,
+    "Épico": 0xE67E22,
+    "Raro": 0x3498DB,
+    "Incomum": 0x2ECC71,
+    "Comum": 0xBDC3C7
+}
+
+# ---------- Efeitos ----------
 EFEITOS_DESC = {
     "hello_kitty": "20% reembolso, +2💗/msg, 10% frag extra",
     "dear_daniel": "+1💗 a cada 50 msgs",
@@ -229,9 +237,18 @@ def novo_jogador():
         "historico_trocas": []
     }
 
-# ---------- Helper para envio de embed com imagem local ----------
-async def enviar_embed_com_imagem(interaction, embed, nome_personagem, ephemeral=False):
-    """Envia embed com thumbnail se a imagem local existir."""
+# ---------- Criação de card de personagem ----------
+def criar_card_personagem(nome_personagem, raridade, efeito, extras=""):
+    emoji = PERSONAGENS_EMOJI.get(nome_personagem, "❓")
+    cor = CORES_RARIDADE.get(raridade, 0xFFB6C1)
+    embed = discord.Embed(
+        title=f"{emoji} {nome_personagem}",
+        description=f"**Raridade:** {raridade}\n**Habilidade:** {EFEITOS_DESC.get(efeito, 'Nenhuma')}{extras}",
+        color=cor
+    )
+    return embed
+
+async def enviar_card(interaction, embed, nome_personagem, ephemeral=False):
     arquivo = None
     if nome_personagem in IMAGENS_LOCAIS:
         caminho = IMAGENS_LOCAIS[nome_personagem]
@@ -262,16 +279,11 @@ class MenuPrincipal(View):
         if not gratis:
             dados[uid]["coracoes"] -= 1
 
-        # Nenê (chance independente)
         if random.random() < 1e-11:
             dados[uid]["personagens"].append("Nenê")
             salvar_dados(dados)
-            embed = discord.Embed(
-                title="💫 IMPOSSÍVEL! Nenê apareceu!",
-                description="A Ultimate mais rara do café!",
-                color=discord.Color.gold()
-            )
-            await enviar_embed_com_imagem(interaction, embed, "Nenê")
+            embed = criar_card_personagem("Nenê", "Ultimate", "nene", "\n🌟 **A Ultimate apareceu!**")
+            await enviar_card(interaction, embed, "Nenê")
             return
 
         personagem = sortear_personagem(uid, dados)
@@ -308,18 +320,14 @@ class MenuPrincipal(View):
 
         salvar_dados(dados)
 
-        msg = ""
-        if gratis: msg += "\n🍮 Você não gastou o 💗!"
-        if duplicar: msg += "\n🐱 Amigo duplicado!"
-        if reembolso: msg += "\n💖 Coração devolvido!"
+        extras = ""
+        if gratis: extras += "\n🍮 Você não gastou o 💗!"
+        if duplicar: extras += "\n🐱 Amigo duplicado!"
+        if reembolso: extras += "\n💖 Coração devolvido!"
 
-        embed = discord.Embed(
-            title=f"🎁 Novo Amigo no Café! {PERSONAGENS_EMOJI.get(personagem['nome'], '❓')}",
-            description=f"**{personagem['nome']}** ({personagem['raridade']})\n{EFEITOS_DESC.get(personagem['efeito'], '')}{msg}",
-            color=discord.Color.from_rgb(255, 182, 193)
-        )
+        embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], extras)
         embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
-        await enviar_embed_com_imagem(interaction, embed, personagem["nome"])
+        await enviar_card(interaction, embed, personagem["nome"])
 
     @discord.ui.button(label="Loja do Café 🛍️", style=discord.ButtonStyle.primary, custom_id="loja_cafe")
     async def loja(self, interaction: discord.Interaction, button: Button):
@@ -332,16 +340,15 @@ class MenuPrincipal(View):
         embed = discord.Embed(
             title="🛍️ Loja do Hello Kitty Café",
             description=(
-                f"💗 {dados[uid]['coracoes']} | 🍬 {dados[uid].get('doces',0)} | 🪙 {dados[uid].get('moedas',0)}\n"
-                f"Fragmentos Hello: {dados[uid]['fragmentos']}\n\n"
-                "⚡ Converter 100🍬 → 4💗\n"
-                "🍀 Cupom da Sorte (200💗+300🍬) → Personagem Raro+\n"
-                "👑 Resgatar Hello Kitty (100 fragmentos)\n"
-                "🪙 Loja de Moedas"
+                f"💗 **{dados[uid]['coracoes']}** | 🍬 **{dados[uid].get('doces',0)}** | 🪙 **{dados[uid].get('moedas',0)}**\n"
+                f"✨ Fragmentos Hello: **{dados[uid]['fragmentos']}**\n\n"
+                "⚡ **Converter 100🍬 → 4💗**\n"
+                "🍀 **Cupom da Sorte** (200💗+300🍬) → Personagem Raro+\n"
+                "👑 **Resgatar Hello Kitty** (100 fragmentos)\n"
+                "🪙 **Loja de Moedas** (compre personagens específicos)"
             ),
-            color=discord.Color.gold()
+            color=0xFFD700
         )
-        # Adiciona a imagem da loja se existir
         if os.path.exists(LOJA_IMAGEM):
             file = discord.File(LOJA_IMAGEM, filename=LOJA_IMAGEM)
             embed.set_thumbnail(url=f"attachment://{LOJA_IMAGEM}")
@@ -361,7 +368,7 @@ class MenuPrincipal(View):
                 emoji = PERSONAGENS_EMOJI.get(p["nome"], "❓")
                 efeito = EFEITOS_DESC.get(p["efeito"], "—")
                 desc += f"{emoji} **{p['nome']}** ({p['raridade']}) - {efeito}\n"
-            embed = discord.Embed(title="🎲 Personagens que podem aparecer", description=desc, color=discord.Color.from_rgb(255, 218, 185))
+            embed = discord.Embed(title="🎲 Personagens que podem aparecer", description=desc, color=0xFFDAB9)
             embed.set_footer(text=f"Página {len(pages)+1}/{(len(chars)-1)//10+1}")
             pages.append(embed)
         if pages:
@@ -449,12 +456,8 @@ class LojaCafeView(View):
         personagem = sortear_personagem(uid, dados, cupom_raridade=True)
         dados[uid]["personagens"].append(personagem["nome"])
         salvar_dados(dados)
-        embed = discord.Embed(
-            title=f"🍀 Cupom da Sorte! {PERSONAGENS_EMOJI.get(personagem['nome'], '❓')}",
-            description=f"**{personagem['nome']}** ({personagem['raridade']})",
-            color=discord.Color.green()
-        )
-        await enviar_embed_com_imagem(interaction, embed, personagem["nome"])
+        embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], "\n🍀 **Cupom da Sorte utilizado!**")
+        await enviar_card(interaction, embed, personagem["nome"])
 
     @discord.ui.button(label="Resgatar Hello Kitty (100 frags) 👑", style=discord.ButtonStyle.danger)
     async def resgatar(self, interaction: discord.Interaction, button: Button):
@@ -468,12 +471,8 @@ class LojaCafeView(View):
         bonus = random.randint(1,5)
         dados[uid]["fragmentos"] += bonus
         salvar_dados(dados)
-        embed = discord.Embed(
-            title="👑 Hello Kitty resgatada!",
-            description=f"Você agora tem a Hello Kitty e ganhou +{bonus} fragmentos extras!",
-            color=discord.Color.gold()
-        )
-        await enviar_embed_com_imagem(interaction, embed, "Hello Kitty")
+        embed = criar_card_personagem("Hello Kitty", "Mítico", "hello_kitty", f"\n👑 Resgatada! +{bonus} fragmentos extras.")
+        await enviar_card(interaction, embed, "Hello Kitty")
 
     @discord.ui.button(label="Loja de Moedas 🪙", style=discord.ButtonStyle.secondary)
     async def loja_moedas(self, interaction: discord.Interaction, button: Button):
@@ -482,7 +481,7 @@ class LojaCafeView(View):
         embed = discord.Embed(
             title="🪙 Loja de Moedas – Compre personagens específicos",
             description=f"Saldo: **{dados[uid].get('moedas', 0)}🪙**\n\nSelecione um personagem:",
-            color=discord.Color.teal()
+            color=0x1ABC9C
         )
         chars = [p for p in PERSONAGENS]
         options = []
@@ -504,13 +503,9 @@ class LojaCafeView(View):
             dados[uid]["moedas"] -= preco
             dados[uid]["personagens"].append(nome)
             salvar_dados(dados)
-            embed = discord.Embed(
-                title=f"✅ Compra realizada! {PERSONAGENS_EMOJI.get(nome, '❓')}",
-                description=f"**{nome}** ({p['raridade']}) foi adicionado à sua turma!",
-                color=discord.Color.teal()
-            )
-            embed.set_footer(text=f"Gasto: {preco}🪙 | Saldo: {dados[uid]['moedas']}🪙")
-            await enviar_embed_com_imagem(interaction_select, embed, nome)
+            embed = criar_card_personagem(nome, p["raridade"], p["efeito"], f"\n💰 Comprado por {preco}🪙")
+            embed.set_footer(text=f"Saldo restante: {dados[uid]['moedas']}🪙")
+            await enviar_card(interaction_select, embed, nome)
         select.callback = callback
         view = View(timeout=60)
         view.add_item(select)
@@ -537,7 +532,7 @@ class AmigosView(View):
             efeito = next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None)
             if nome == "Nenê": efeito = "nene"
             desc += f"{emoji} {nome} ×{qtd}  [{EFEITOS_DESC.get(efeito, '—')}]\n"
-        embed = discord.Embed(title="👥 Turma do Hello Kitty Café", description=desc, color=discord.Color.from_rgb(255, 105, 180))
+        embed = discord.Embed(title="👥 Turma do Hello Kitty Café", description=desc, color=0xFF69B4)
         embed.set_footer(text=f"Total: {len(dados[uid]['personagens'])} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
         await interaction.response.send_message(embed=embed, view=TurmaAcoesView(uid), ephemeral=True)
 
@@ -566,7 +561,7 @@ class AmigosView(View):
                 embed = discord.Embed(
                     title="🤝 Proposta de Troca",
                     description=f"{interaction.user.mention} quer trocar **{personagem_oferecido}** com você!",
-                    color=discord.Color.green()
+                    color=0x2ECC71
                 )
                 view = AceitarRecusarView(uid, alvo_id, personagem_oferecido)
                 await interaction.channel.send(content=alvo_user.mention, embed=embed, view=view)
@@ -589,7 +584,7 @@ class AmigosView(View):
             await interaction.response.send_message("Nenhuma troca realizada.", ephemeral=True)
             return
         msg = "\n".join(historico[-10:])
-        embed = discord.Embed(title="📜 Histórico de Trocas", description=msg, color=discord.Color.light_grey())
+        embed = discord.Embed(title="📜 Histórico de Trocas", description=msg, color=0xBDC3C7)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class TurmaAcoesView(View):
@@ -618,12 +613,9 @@ class TurmaAcoesView(View):
             dados[uid]["personagens"].remove(nome)
             dados[uid]["moedas"] = dados[uid].get("moedas", 0) + valor
             salvar_dados(dados)
-            embed = discord.Embed(
-                title=f"💰 Venda! {PERSONAGENS_EMOJI.get(nome, '❓')}",
-                description=f"**{nome}** vendido por **{valor} moedas**!",
-                color=discord.Color.orange()
-            )
-            await enviar_embed_com_imagem(interaction_select, embed, nome)
+            embed = criar_card_personagem(nome, raridade, next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None), f"\n💰 Vendido por {valor}🪙")
+            embed.set_footer(text=f"Total de moedas: {dados[uid]['moedas']}")
+            await enviar_card(interaction_select, embed, nome)
         select.callback = callback
         view = View(timeout=60)
         view.add_item(select)
@@ -647,12 +639,8 @@ class TurmaAcoesView(View):
         novo = sortear_personagem(uid, dados)
         dados[uid]["personagens"].append(novo["nome"])
         salvar_dados(dados)
-        embed = discord.Embed(
-            title="🔄 Troca Cinnamoroll",
-            description=f"2× {nome} → **{novo['nome']}**",
-            color=discord.Color.blue()
-        )
-        await enviar_embed_com_imagem(interaction, embed, novo["nome"])
+        embed = criar_card_personagem(novo["nome"], novo["raridade"], novo["efeito"], f"\n🔄 Trocou 2× {nome}")
+        await enviar_card(interaction, embed, novo["nome"])
 
     @discord.ui.button(label="Hangyodon: Reciclar duplicata ♻️", style=discord.ButtonStyle.danger)
     async def hangyodon(self, interaction: discord.Interaction, button: Button):
@@ -696,7 +684,7 @@ class TutorialAjudaView(View):
                 "🤝 **Amigos:** veja sua turma, troque personagens com outros membros e consulte o histórico de trocas.\n\n"
                 "🎲 **Drops Possíveis:** veja todos os personagens que podem aparecer."
             ),
-            color=discord.Color.blue()
+            color=0x3498DB
         )
         embed.set_image(url="attachment://Hello_kitty.png")
         await interaction.response.send_message(embed=embed, file=discord.File("Hello_kitty.png"), ephemeral=True)
@@ -715,7 +703,7 @@ class TutorialAjudaView(View):
                 "• Hello Kitty: 100 fragmentos para resgate.\n"
                 "• Troque com amigos no menu Amigos."
             ),
-            color=discord.Color.from_rgb(255, 192, 203)
+            color=0xFFC0CB
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -782,7 +770,7 @@ async def hellokitty(interaction: discord.Interaction):
     embed = discord.Embed(
         title="☕ Hello Kitty Café 🎀",
         description="**Clique nos botões para explorar o café!**",
-        color=discord.Color.from_rgb(255, 105, 180)
+        color=0xFF69B4
     )
     embed.set_image(url="attachment://Hello_kitty.png")
     await interaction.response.send_message(
