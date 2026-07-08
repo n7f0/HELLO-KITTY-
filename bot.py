@@ -114,13 +114,13 @@ EFEITOS_DESC = {
     "moppu": "3% reembolso",
     "coro_chan": "5% frag extra",
     "minna_tabo": "10% não gastar 💗",
-    "charmmy_kitty": "+1💗 inicial",
+    "charmmy_kitty": "+1💗 inicial (ganho ao adquiri-la)",
     "sugar": "5% +1💗 ao comprar",
-    "tiny_chum": "+2💗 inicial",
-    "cathy": "2% Épico+",
+    "tiny_chum": "+2💗 inicial (ganho ao adquiri-la)",
+    "cathy": "2% chance Épico+",
     "george": "+1 frag a cada 100 msgs",
     "fifi": "+1💗 a cada 20 msgs",
-    "rory": "5% +1 frag",
+    "rory": "5% +1 frag ao comprar",
     "lulu": "1% reembolso",
     "pipi": "+1💗 a cada 80 msgs",
     "nana": "+1💗 a cada 25 msgs",
@@ -256,12 +256,13 @@ def criar_card_personagem(nome_personagem, raridade, efeito, extras=""):
     return embed
 
 async def enviar_card(interaction, embed, nome_personagem, ephemeral=False):
+    """Envia embed com thumbnail (imagem no canto superior direito)."""
     arquivo = None
     if nome_personagem in IMAGENS_LOCAIS:
         caminho = IMAGENS_LOCAIS[nome_personagem]
         if os.path.exists(caminho):
             arquivo = discord.File(caminho, filename=caminho)
-            embed.set_image(url=f"attachment://{caminho}")  # imagem grande abaixo
+            embed.set_thumbnail(url=f"attachment://{caminho}")
     if arquivo:
         await interaction.response.send_message(embed=embed, file=arquivo, ephemeral=ephemeral)
     else:
@@ -311,6 +312,7 @@ class MenuPrincipal(View):
         if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados[uid]["fragmentos"] += 1
+        if tem_efeito(uid, dados, "rory") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
 
         reembolso = False
         if tem_efeito(uid, dados, "my_melody") and random.random() < 0.10: reembolso = True
@@ -324,13 +326,19 @@ class MenuPrincipal(View):
         if tem_efeito(uid, dados, "badtz_maru"): dados[uid]["coracoes"] += 5
         if tem_efeito(uid, dados, "sugar") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados[uid]["coracoes"] += 1
+        if tem_efeito(uid, dados, "lala") and random.random() < 0.10: dados[uid]["coracoes"] += 1
+
+        if personagem["nome"] == "Charmmy Kitty":
+            dados[uid]["coracoes"] += 1
+        if personagem["nome"] == "Tiny Chum":
+            dados[uid]["coracoes"] += 2
 
         salvar_dados(dados)
 
         extras = ""
         if gratis: extras += "🍮 Você não gastou o 💗!\n"
         if duplicar: extras += "🐱 Amigo duplicado!\n"
-        if reembolso: extras += "💖 Coração devolvido!"
+        if reembolso: extras += "💖 Coração devolvido!\n"
 
         embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], extras)
         embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
@@ -355,7 +363,7 @@ class MenuPrincipal(View):
 
         if os.path.exists(LOJA_IMAGEM):
             file = discord.File(LOJA_IMAGEM, filename=LOJA_IMAGEM)
-            embed.set_image(url=f"attachment://{LOJA_IMAGEM}")
+            embed.set_thumbnail(url=f"attachment://{LOJA_IMAGEM}")
             await interaction.response.send_message(embed=embed, file=file, view=LojaCafeView(uid), ephemeral=True)
         else:
             await interaction.response.send_message(embed=embed, view=LojaCafeView(uid), ephemeral=True)
@@ -364,19 +372,24 @@ class MenuPrincipal(View):
     async def drops_possiveis(self, interaction: discord.Interaction, button: Button):
         ordem = {"Ultimate":0, "Mítico":1, "Lendário":2, "Épico":3, "Raro":4, "Incomum":5, "Comum":6}
         chars = sorted(PERSONAGENS, key=lambda x: ordem.get(x["raridade"], 99))
-        pages = []
-        for i in range(0, len(chars), 10):
-            chunk = chars[i:i+10]
-            desc = ""
-            for p in chunk:
-                emoji = PERSONAGENS_EMOJI.get(p["nome"], "❓")
-                efeito = EFEITOS_DESC.get(p["efeito"], "—")
-                desc += f"{emoji} **{p['nome']}** ({p['raridade']}) - {efeito}\n"
-            embed = discord.Embed(title="🎲 Personagens que podem aparecer", description=desc, color=0xFFDAB9)
-            embed.set_footer(text=f"Página {len(pages)+1}/{(len(chars)-1)//10+1}")
-            pages.append(embed)
-        if pages:
-            await interaction.response.send_message(embed=pages[0], view=PaginaView(pages, 0), ephemeral=True)
+        # Cria um card por personagem
+        embeds = []
+        for p in chars:
+            embed = criar_card_personagem(p["nome"], p["raridade"], p["efeito"])
+            # Se tiver imagem, adiciona como thumbnail (precisa do arquivo)
+            if p["nome"] in IMAGENS_LOCAIS:
+                caminho = IMAGENS_LOCAIS[p["nome"]]
+                if os.path.exists(caminho):
+                    embed.set_thumbnail(url=f"attachment://{caminho}")
+            embeds.append(embed)
+        # Envia o primeiro card com view de paginação
+        if embeds:
+            # Para embeds com imagens locais, precisamos enviar o arquivo junto
+            # Vamos criar uma PaginaView que gerencia a exibição dos cards
+            view = CardsPaginaView(embeds, 0)
+            await view.enviar(interaction, ephemeral=True)
+        else:
+            await interaction.response.send_message("Nenhum personagem disponível.", ephemeral=True)
 
     @discord.ui.button(label="Amigos 🤝", style=discord.ButtonStyle.primary, custom_id="amigos_menu")
     async def amigos_menu(self, interaction: discord.Interaction, button: Button):
@@ -386,29 +399,61 @@ class MenuPrincipal(View):
     async def tutorial_ajuda(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("O que você gostaria de ver?", view=TutorialAjudaView(), ephemeral=True)
 
-# ---------- Paginação ----------
-class PaginaView(View):
-    def __init__(self, pages, current):
-        super().__init__(timeout=60)
-        self.pages = pages
+# ---------- View de paginação para cards individuais (com suporte a imagens locais) ----------
+class CardsPaginaView(View):
+    def __init__(self, embeds, current):
+        super().__init__(timeout=120)
+        self.embeds = embeds
         self.current = current
         self.update_buttons()
 
     def update_buttons(self):
         self.children[0].disabled = self.current == 0
-        self.children[1].disabled = self.current == len(self.pages) - 1
+        self.children[1].disabled = self.current == len(self.embeds) - 1
+
+    async def enviar(self, interaction, ephemeral=True):
+        """Envia a mensagem inicial com o primeiro card e imagem se necessário."""
+        embed = self.embeds[self.current]
+        # Verifica se o embed tem thumbnail com attachment://
+        file = None
+        if embed.thumbnail.url and embed.thumbnail.url.startswith("attachment://"):
+            filename = embed.thumbnail.url.split("attachment://")[1]
+            if os.path.exists(filename):
+                file = discord.File(filename, filename=filename)
+        if file:
+            await interaction.response.send_message(embed=embed, file=file, view=self, ephemeral=ephemeral)
+        else:
+            await interaction.response.send_message(embed=embed, view=self, ephemeral=ephemeral)
 
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
     async def anterior(self, interaction: discord.Interaction, button: Button):
         self.current -= 1
         self.update_buttons()
-        await interaction.response.edit_message(embed=self.pages[self.current], view=self)
+        embed = self.embeds[self.current]
+        file = None
+        if embed.thumbnail.url and embed.thumbnail.url.startswith("attachment://"):
+            filename = embed.thumbnail.url.split("attachment://")[1]
+            if os.path.exists(filename):
+                file = discord.File(filename, filename=filename)
+        if file:
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+        else:
+            await interaction.response.edit_message(embed=embed, attachments=[], view=self)
 
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
     async def proximo(self, interaction: discord.Interaction, button: Button):
         self.current += 1
         self.update_buttons()
-        await interaction.response.edit_message(embed=self.pages[self.current], view=self)
+        embed = self.embeds[self.current]
+        file = None
+        if embed.thumbnail.url and embed.thumbnail.url.startswith("attachment://"):
+            filename = embed.thumbnail.url.split("attachment://")[1]
+            if os.path.exists(filename):
+                file = discord.File(filename, filename=filename)
+        if file:
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+        else:
+            await interaction.response.edit_message(embed=embed, attachments=[], view=self)
 
 # ---------- Loja ----------
 class LojaCafeView(View):
