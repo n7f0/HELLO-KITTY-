@@ -6,13 +6,11 @@ import random
 import json
 import os
 import datetime
+from datetime import timezone
 import asyncio
 import warnings
-import google.generativeai as genai
+import google.genai as genai
 from collections import defaultdict
-
-# Suprimir aviso de depreciação
-warnings.filterwarnings("ignore", category=FutureWarning)
 
 # =================== CONFIGURAÇÕES ===================
 TOKEN = os.getenv("TOKEN")
@@ -22,11 +20,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ARQUIVO_IA = "ia_config.json"
 # =====================================================
 
-# Configurar Gemini
+# Configurar Gemini (nova SDK)
 modelo_ia = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    modelo_ia = genai.GenerativeModel('gemini-1.5-flash')
+    cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
+    modelo_ia = "gemini-1.5-flash"  # modelo correto
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -334,11 +332,11 @@ def verificar_conquistas(uid, dados):
 # ---------- Missões ----------
 def resetar_missoes_diarias(uid, dados):
     dados[uid]["missoes_diarias"] = {m["id"]: 0 for m in MISSOES_DIARIAS}
-    dados[uid]["ultima_reset_diaria"] = datetime.datetime.utcnow().timestamp()
+    dados[uid]["ultima_reset_diaria"] = datetime.datetime.now(timezone.utc).timestamp()
 
 def resetar_missoes_semanais(uid, dados):
     dados[uid]["missoes_semanais"] = {m["id"]: 0 for m in MISSOES_SEMANAIS}
-    dados[uid]["ultima_reset_semanal"] = datetime.datetime.utcnow().timestamp()
+    dados[uid]["ultima_reset_semanal"] = datetime.datetime.now(timezone.utc).timestamp()
 
 # =================== VIEW PRINCIPAL ===================
 class MenuPrincipal(View):
@@ -552,7 +550,7 @@ class LojaCafeView(View):
         dados = carregar_dados()
         uid = str(interaction.user.id)
         if uid not in dados: dados[uid] = novo_jogador()
-        agora = datetime.datetime.utcnow().timestamp()
+        agora = datetime.datetime.now(timezone.utc).timestamp()
         ultimo = dados[uid].get("ultimo_doce", 0)
         if agora - ultimo < 86400:
             falta = 86400 - (agora - ultimo)
@@ -1073,7 +1071,7 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
         Você está no servidor do Discord "Hello Kitty Café", um joguinho de colecionar personagens.
         Responda de forma fofa, animada e ajude o jogador com dicas sobre o jogo (como conseguir corações, doces, fragmentos, trocar com amigos).
         Mensagem do jogador: {mensagem}"""
-        response = modelo_ia.generate_content(prompt)
+        response = cliente_ia.models.generate_content(model=modelo_ia, contents=prompt)
         texto = response.text
         await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
     except Exception as e:
@@ -1094,7 +1092,7 @@ async def historinha(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         prompt = f"Crie uma historinha curta e fofa com os seguintes personagens: {', '.join(set(personagens))}. A Hello Kitty é a anfitriã do café."
-        response = modelo_ia.generate_content(prompt)
+        response = cliente_ia.models.generate_content(model=modelo_ia, contents=prompt)
         await interaction.followup.send(f"📖 {response.text}")
     except Exception as e:
         print(f"Erro na historinha: {e}")
@@ -1156,7 +1154,7 @@ async def on_message(message):
         await notificar_meta(uid, f"nivel_{nivel_novo}", f"🎉 Você subiu para o nível {nivel_novo}! {TITULOS.get(nivel_novo, '')}\nRecompensas: {recomp}")
 
     # Missões
-    agora = datetime.datetime.utcnow().timestamp()
+    agora = datetime.datetime.now(timezone.utc).timestamp()
     if "ultima_reset_diaria" not in jogador or agora - jogador["ultima_reset_diaria"] > 86400:
         resetar_missoes_diarias(uid, dados)
     if "ultima_reset_semanal" not in jogador or agora - jogador["ultima_reset_semanal"] > 604800:
@@ -1228,11 +1226,11 @@ async def on_message(message):
 
     # Cooldown por canal (10 segundos)
     canal_id = message.channel.id
-    if canal_id in ia_cooldowns and datetime.datetime.utcnow().timestamp() - ia_cooldowns[canal_id] < 10:
+    if canal_id in ia_cooldowns and datetime.datetime.now(timezone.utc).timestamp() - ia_cooldowns[canal_id] < 10:
         await bot.process_commands(message)
         return
 
-    ia_cooldowns[canal_id] = datetime.datetime.utcnow().timestamp()
+    ia_cooldowns[canal_id] = datetime.datetime.now(timezone.utc).timestamp()
 
     try:
         prompt = f"""Você é a Hello Kitty, uma gatinha meiga e amigável do universo Sanrio.
@@ -1240,7 +1238,7 @@ Você está em um chat do Discord no servidor "Hello Kitty Café", um joguinho d
 Converse naturalmente com os membros, dê dicas fofas sobre o jogo, e mantenha um tom animado.
 Responda em português, de forma curta e amigável.
 Mensagem recebida: {message.content}"""
-        response = modelo_ia.generate_content(prompt)
+        response = cliente_ia.models.generate_content(model=modelo_ia, contents=prompt)
         texto = response.text
         if len(texto) > 2000:
             texto = texto[:1997] + "..."
