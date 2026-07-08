@@ -18,7 +18,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")  # PostgreSQL no Railway
 GUILD_ID = os.getenv("GUILD_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Configurar logging
 logging.basicConfig(level=logging.INFO)
 
 # =================== BANCO DE DADOS ===================
@@ -28,7 +27,6 @@ async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
     async with db_pool.acquire() as conn:
-        # Tabela de usuários
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -54,7 +52,6 @@ async def init_db():
                 historico_trocas JSONB DEFAULT '[]'::jsonb
             )
         ''')
-        # Tabela de trocas pendentes
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS trocas (
                 id SERIAL PRIMARY KEY,
@@ -72,28 +69,14 @@ async def get_user_data(user_id):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
         if not row:
-            # Criar novo usuário
             default = {
-                "coracoes": 3,
-                "doces": 0,
-                "fragmentos": 0,
-                "moedas": 0,
-                "msg_count": 0,
-                "coracoes_ganhos": 0,
-                "ultimo_doce": 0,
-                "xp": 0,
-                "nivel": 1,
-                "conquistas": [],
-                "missoes_diarias": {},
-                "missoes_semanais": {},
-                "missoes_concluidas": [],
-                "decoracoes": [],
-                "decoracao_ativa": {},
-                "lista_desejos": [],
-                "resumo_dm": False,
-                "ultimo_drop": 0,
-                "personagens": [],
-                "historico_trocas": []
+                "coracoes": 3, "doces": 0, "fragmentos": 0, "moedas": 0,
+                "msg_count": 0, "coracoes_ganhos": 0, "ultimo_doce": 0,
+                "xp": 0, "nivel": 1, "conquistas": [], "missoes_diarias": {},
+                "missoes_semanais": {}, "missoes_concluidas": [],
+                "decoracoes": [], "decoracao_ativa": {}, "lista_desejos": [],
+                "resumo_dm": False, "ultimo_drop": 0,
+                "personagens": [], "historico_trocas": []
             }
             await conn.execute('''
                 INSERT INTO users (
@@ -113,7 +96,6 @@ async def get_user_data(user_id):
                default["ultimo_drop"], json.dumps(default["personagens"]),
                json.dumps(default["historico_trocas"]))
             row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
-        # Converter JSON strings para objetos Python
         data = dict(row)
         for key in ['conquistas', 'missoes_diarias', 'missoes_semanais', 'missoes_concluidas',
                     'decoracoes', 'decoracao_ativa', 'lista_desejos', 'personagens', 'historico_trocas']:
@@ -125,25 +107,12 @@ async def update_user_data(user_id, data):
     async with db_pool.acquire() as conn:
         await conn.execute('''
             UPDATE users SET
-                coracoes = $1,
-                doces = $2,
-                fragmentos = $3,
-                moedas = $4,
-                msg_count = $5,
-                coracoes_ganhos = $6,
-                ultimo_doce = $7,
-                xp = $8,
-                nivel = $9,
-                conquistas = $10,
-                missoes_diarias = $11,
-                missoes_semanais = $12,
-                missoes_concluidas = $13,
-                decoracoes = $14,
-                decoracao_ativa = $15,
-                lista_desejos = $16,
-                resumo_dm = $17,
-                ultimo_drop = $18,
-                personagens = $19,
+                coracoes = $1, doces = $2, fragmentos = $3, moedas = $4,
+                msg_count = $5, coracoes_ganhos = $6, ultimo_doce = $7,
+                xp = $8, nivel = $9, conquistas = $10,
+                missoes_diarias = $11, missoes_semanais = $12, missoes_concluidas = $13,
+                decoracoes = $14, decoracao_ativa = $15, lista_desejos = $16,
+                resumo_dm = $17, ultimo_drop = $18, personagens = $19,
                 historico_trocas = $20
             WHERE id = $21
         ''', data['coracoes'], data['doces'], data['fragmentos'], data['moedas'],
@@ -155,13 +124,17 @@ async def update_user_data(user_id, data):
            data['resumo_dm'], data['ultimo_drop'], json.dumps(data['personagens']),
            json.dumps(data['historico_trocas']), user_id)
 
-# =================== IA (Gemini) ===================
+# =================== IA (Gemini) – CORRIGIDO ===================
+import google.generativeai as genai
+
 cliente_ia = None
+MODELO_IA = "gemini-1.5-flash"  # Modelo gratuito e estável
+
 if GEMINI_API_KEY:
     try:
-        import google.genai as genai
-        cliente_ia = genai.Client(api_key=GEMINI_API_KEY)
-        MODELO_IA = "gemini-2.0-flash"  # Modelo disponível gratuitamente
+        genai.configure(api_key=GEMINI_API_KEY)
+        cliente_ia = genai.GenerativeModel(MODELO_IA)
+        logging.info("IA Gemini inicializada com sucesso.")
     except Exception as e:
         logging.error(f"Erro ao inicializar Gemini: {e}")
 
@@ -171,7 +144,7 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------- Emojis e imagens (mesmo do original) ----------
+# ---------- Emojis e imagens ----------
 PERSONAGENS_EMOJI = {
     "Nenê": "💫", "Hello Kitty": "👧", "Dear Daniel": "💙", "My Melody": "🎀",
     "Kuromi": "💀", "Pompompurin": "🍮", "Cinnamoroll": "☁️",
@@ -376,17 +349,6 @@ def sortear_personagem(uid, dados, cupom_raridade=False):
             return p
     return chars_validos[0]
 
-def novo_jogador():
-    return {
-        "coracoes": 3, "doces": 0, "personagens": [], "fragmentos": 0,
-        "moedas": 0, "msg_count": 0, "coracoes_ganhos": 0,
-        "ultimo_doce": 0, "historico_trocas": [],
-        "xp": 0, "nivel": 1, "conquistas": [],
-        "missoes_diarias": {}, "missoes_semanais": {},
-        "decoracoes": [], "decoracao_ativa": {"moldura": None, "fundo": None},
-        "lista_desejos": [], "resumo_dm": False
-    }
-
 def preparar_embed_com_imagem(embed, nome_personagem):
     if nome_personagem in IMAGENS_LOCAIS:
         caminho = IMAGENS_LOCAIS[nome_personagem]
@@ -458,7 +420,7 @@ def resetar_missoes_semanais(dados):
 
 # =================== VIEWS ===================
 
-# ---------- Menu Principal ----------
+# ---------- MenuPrincipal ----------
 class MenuPrincipal(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -656,7 +618,7 @@ class CardsPaginaView(View):
         else:
             await interaction.response.edit_message(embed=embed, attachments=[], view=self)
 
-# ---------- Loja ----------
+# ---------- LojaCafeView ----------
 class LojaCafeView(View):
     def __init__(self, uid):
         super().__init__(timeout=60)
@@ -789,7 +751,7 @@ class LojaCafeView(View):
         view.add_item(select)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# ---------- Amigos ----------
+# ---------- AmigosView ----------
 class AmigosView(View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -834,7 +796,6 @@ class AmigosView(View):
             select_m = Select(placeholder="Escolha o amigo...", options=membro_opts)
             async def membro_cb(interaction_m: discord.Interaction):
                 alvo_id = select_m.values[0]
-                # Criar solicitação no banco
                 async with db_pool.acquire() as conn:
                     await conn.execute('''
                         INSERT INTO trocas (solicitante_id, alvo_id, personagem_oferecido, timestamp)
@@ -868,6 +829,7 @@ class AmigosView(View):
         embed = discord.Embed(title="📜 Histórico de Trocas", description=msg, color=0xBDC3C7)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# ---------- TurmaAcoesView ----------
 class TurmaAcoesView(View):
     def __init__(self, uid):
         super().__init__(timeout=60)
@@ -948,7 +910,7 @@ class TurmaAcoesView(View):
         await update_user_data(self.uid, dados)
         await interaction.response.send_message(f"♻️ {nome} → +3💗", ephemeral=True)
 
-# ---------- Tutorial/Ajuda ----------
+# ---------- TutorialAjudaView ----------
 class TutorialAjudaView(View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -1055,12 +1017,11 @@ async def adicionar_desejo(interaction: discord.Interaction, personagem: str):
 
 @bot.tree.command(name="drop", description="Resgate seu drop a cada 4 horas!")
 async def drop(interaction: discord.Interaction):
-    """Mostra o painel do drop com tempo restante e botão para resgatar."""
     uid = str(interaction.user.id)
     dados = await get_user_data(uid)
     agora = datetime.datetime.now(timezone.utc).timestamp()
     ultimo = dados.get("ultimo_drop", 0)
-    intervalo = 4 * 3600  # 4 horas
+    intervalo = 4 * 3600
     restante = intervalo - (agora - ultimo)
 
     embed = discord.Embed(title="🎁 Drop do Café", color=0xFF69B4)
@@ -1093,7 +1054,6 @@ class DropView(View):
         if agora - ultimo < 4 * 3600:
             await interaction.response.send_message("⏳ Ainda não passou 4 horas!", ephemeral=True)
             return
-        # Recompensa aleatória
         premios = [
             ("💗", "coracoes", random.randint(3, 8)),
             ("🍬", "doces", random.randint(2, 5)),
@@ -1109,7 +1069,7 @@ class DropView(View):
             description=f"Você ganhou **{escolha[2]} {escolha[0]}**!",
             color=0x2ECC71
         )
-        embed.set_footer(text=f"Próximo drop em 4 horas.")
+        embed.set_footer(text="Próximo drop em 4 horas.")
         await interaction.response.edit_message(embed=embed, view=None)
 
 @bot.tree.command(name="minijogo", description="Jogue um minijogo: roleta, memória ou adivinhe")
@@ -1170,10 +1130,10 @@ async def ver_trocas(interaction: discord.Interaction):
             value=f"Oferece: {row['personagem_oferecido']}\nID: {row['id']}",
             inline=False
         )
-    embed.set_footer(text="Use /respondertroca <id> para aceitar ou recusar.")
+    embed.set_footer(text="Use /respondertroca <id> aceitar ou recusar")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="respondertroca", description="Responda a uma solicitação de troca (aceitar ou recusar)")
+@bot.tree.command(name="respondertroca", description="Responda a uma solicitação de troca")
 async def responder_troca(interaction: discord.Interaction, id: int, acao: str):
     uid = str(interaction.user.id)
     async with db_pool.acquire() as conn:
@@ -1186,46 +1146,37 @@ async def responder_troca(interaction: discord.Interaction, id: int, acao: str):
             await interaction.response.send_message("❌ Troca recusada.", ephemeral=True)
             return
         elif acao.lower() == "aceitar":
-            # Buscar personagens do alvo para escolher qual dar
             dados_alvo = await get_user_data(uid)
             personagens_alvo = list(set(dados_alvo["personagens"]))
             if not personagens_alvo:
                 await interaction.response.send_message("Você não tem personagens para trocar.", ephemeral=True)
                 return
-            # Oferecer seleção
             options = [discord.SelectOption(label=nome, value=nome) for nome in personagens_alvo[:25]]
             select = Select(placeholder="Escolha o personagem que você dará", options=options)
             async def select_cb(interaction_select: discord.Interaction):
                 personagem_dado = select.values[0]
-                # Concluir troca
                 solicitante_id = row['solicitante_id']
                 personagem_oferecido = row['personagem_oferecido']
                 dados_solicitante = await get_user_data(solicitante_id)
-                # Verificar se solicitante ainda tem o personagem
                 if personagem_oferecido not in dados_solicitante["personagens"]:
                     await interaction_select.response.send_message("O solicitante não tem mais esse personagem.", ephemeral=True)
                     return
-                # Remover e adicionar
                 dados_solicitante["personagens"].remove(personagem_oferecido)
                 dados_solicitante["personagens"].append(personagem_dado)
                 dados_alvo["personagens"].remove(personagem_dado)
                 dados_alvo["personagens"].append(personagem_oferecido)
-                # Registrar histórico
                 registro = f"{interaction.user.name} deu **{personagem_dado}** e recebeu **{personagem_oferecido}** de <@{solicitante_id}>"
                 dados_solicitante.setdefault("historico_trocas", []).append(registro)
                 dados_alvo.setdefault("historico_trocas", []).append(registro)
-                # Atualizar missões
                 dados_solicitante["missoes_diarias"]["trocas"] = dados_solicitante["missoes_diarias"].get("trocas", 0) + 1
                 dados_solicitante["missoes_semanais"]["trocas"] = dados_solicitante["missoes_semanais"].get("trocas", 0) + 1
                 dados_alvo["missoes_diarias"]["trocas"] = dados_alvo["missoes_diarias"].get("trocas", 0) + 1
                 dados_alvo["missoes_semanais"]["trocas"] = dados_alvo["missoes_semanais"].get("trocas", 0) + 1
                 await update_user_data(solicitante_id, dados_solicitante)
                 await update_user_data(uid, dados_alvo)
-                # Marcar troca como concluída
                 async with db_pool.acquire() as conn2:
                     await conn2.execute('UPDATE trocas SET status = "concluida" WHERE id = $1', id)
                 await interaction_select.response.send_message(f"✅ Troca concluída! {registro}", ephemeral=False)
-                # Notificar solicitante
                 solicitante_user = await bot.fetch_user(int(solicitante_id))
                 await solicitante_user.send(f"✅ Sua troca com {interaction.user.display_name} foi concluída! Você recebeu **{personagem_dado}**.")
             select.callback = select_cb
@@ -1239,7 +1190,7 @@ async def responder_troca(interaction: discord.Interaction, id: int, acao: str):
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
 async def historinha(interaction: discord.Interaction):
     if not cliente_ia:
-        await interaction.response.send_message("💔 IA não disponível.", ephemeral=True)
+        await interaction.response.send_message("💔 IA não disponível (chave API não configurada).", ephemeral=True)
         return
     dados = await get_user_data(str(interaction.user.id))
     personagens = dados.get("personagens", [])
@@ -1249,14 +1200,14 @@ async def historinha(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         prompt = f"Crie uma historinha curta e fofa (máximo 100 palavras) com os seguintes personagens: {', '.join(set(personagens[:5]))}. A Hello Kitty é a anfitriã do café."
-        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
-        texto = response.text[:1500]  # Limitar tamanho
+        response = cliente_ia.generate_content(prompt)
+        texto = response.text[:1500]
         await interaction.followup.send(f"📖 {texto}")
     except Exception as e:
         logging.error(f"Erro na historinha: {e}")
         await interaction.followup.send("🌸 Ops! A Hello Kitty está com preguiça de escrever hoje... tente de novo mais tarde. 😿")
 
-@bot.tree.command(name="conversar", description="Fale com a Hello Kitty! (modo alternativo)")
+@bot.tree.command(name="conversar", description="Fale com a Hello Kitty!")
 async def conversar(interaction: discord.Interaction, mensagem: str):
     if not cliente_ia:
         await interaction.response.send_message("💔 IA não disponível.", ephemeral=True)
@@ -1265,9 +1216,9 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
     try:
         prompt = f"""Você é a Hello Kitty, uma gatinha meiga e amigável do universo Sanrio.
         Você está no servidor do Discord "Hello Kitty Café", um joguinho de colecionar personagens.
-        Responda de forma fofa, animada e ajude o jogador com dicas sobre o jogo (como conseguir corações, doces, fragmentos, trocar com amigos).
+        Responda de forma fofa, animada e ajude o jogador com dicas sobre o jogo.
         Mensagem do jogador: {mensagem}"""
-        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
+        response = cliente_ia.generate_content(prompt)
         texto = response.text[:1800]
         await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
     except Exception as e:
@@ -1289,7 +1240,7 @@ async def on_ready():
         await bot.tree.sync()
     logging.info("Bot pronto!")
 
-# ---------- Processamento de mensagens (XP, efeitos, etc.) ----------
+# ---------- Processamento de mensagens ----------
 ia_cooldowns = {}
 ia_falhas_consecutivas = defaultdict(int)
 
@@ -1301,11 +1252,9 @@ async def on_message(message):
     uid = str(message.author.id)
     dados = await get_user_data(uid)
 
-    # Atualizar contagem de mensagens
     dados["msg_count"] += 1
     mensagens = dados["msg_count"]
 
-    # XP e nível
     dados["xp"] = dados.get("xp", 0) + 1
     nivel_antigo = calcular_nivel(dados["xp"] - 1)
     nivel_novo = calcular_nivel(dados["xp"])
@@ -1315,7 +1264,6 @@ async def on_message(message):
             dados[k] = dados.get(k, 0) + v
         await notificar_meta(uid, f"nivel_{nivel_novo}", f"🎉 Você subiu para o nível {nivel_novo}! {TITULOS.get(nivel_novo, '')}\nRecompensas: {recomp}")
 
-    # Missões
     agora = datetime.datetime.now(timezone.utc).timestamp()
     if "ultima_reset_diaria" not in dados or agora - dados.get("ultima_reset_diaria", 0) > 86400:
         resetar_missoes_diarias(dados)
@@ -1359,7 +1307,7 @@ async def on_message(message):
         dados["fragmentos"] += 1
         await notificar_meta(uid, f"sasa_{mensagens}", f"🐱 Sasa: +1 fragmento Hello! ({mensagens} msgs)")
 
-    # Verificar conclusão de missões
+    # Verificar missões
     for missao in MISSOES_DIARIAS:
         if dados["missoes_diarias"].get(missao["id"], 0) >= missao["meta"] and f"diaria_{missao['id']}" not in dados.get("missoes_concluidas", []):
             dados.setdefault("missoes_concluidas", []).append(f"diaria_{missao['id']}")
@@ -1399,7 +1347,7 @@ Você está em um chat do Discord no servidor "Hello Kitty Café", um joguinho d
 Converse naturalmente com os membros, dê dicas fofas sobre o jogo, e mantenha um tom animado.
 Responda em português, de forma curta e amigável (máximo 2 frases).
 Mensagem recebida: {message.content}"""
-        response = cliente_ia.models.generate_content(model=MODELO_IA, contents=prompt)
+        response = cliente_ia.generate_content(prompt)
         texto = response.text
         if len(texto) > 2000:
             texto = texto[:1997] + "..."
