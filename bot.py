@@ -84,12 +84,12 @@ LOJA_IMAGEM = "loja.png"
 
 CORES_RARIDADE = {
     "Ultimate": 0xFFD700,
-    "Mítico": 0xFF69B4,
-    "Lendário": 0x9B59B6,
-    "Épico": 0xE67E22,
-    "Raro": 0x3498DB,
-    "Incomum": 0x2ECC71,
-    "Comum": 0xBDC3C7
+    "Mítico": 0xFF1493,
+    "Lendário": 0x9932CC,
+    "Épico": 0xFF8C00,
+    "Raro": 0x1E90FF,
+    "Incomum": 0x32CD32,
+    "Comum": 0xA9A9A9
 }
 
 # ---------- Efeitos ----------
@@ -241,28 +241,25 @@ def novo_jogador():
         "historico_trocas": []
     }
 
-# ---------- Criação de card de personagem ----------
+# ---------- Criação de card de personagem GRANDE ----------
 def criar_card_personagem(nome_personagem, raridade, efeito, extras=""):
     emoji = PERSONAGENS_EMOJI.get(nome_personagem, "❓")
     cor = CORES_RARIDADE.get(raridade, 0xFFB6C1)
     embed = discord.Embed(
         title=f"{emoji} {nome_personagem}",
+        description=f"**Raridade:** {raridade}\n**Habilidade:** {EFEITOS_DESC.get(efeito, 'Nenhuma')}{extras}",
         color=cor
     )
-    embed.add_field(name="Raridade", value=raridade, inline=True)
-    embed.add_field(name="Habilidade", value=EFEITOS_DESC.get(efeito, "Nenhuma"), inline=True)
-    if extras:
-        embed.add_field(name="✨ Detalhes", value=extras, inline=False)
     return embed
 
 async def enviar_card(interaction, embed, nome_personagem, ephemeral=False):
-    """Envia embed com thumbnail (imagem no canto superior direito)."""
+    """Envia embed com IMAGEM GRANDE (set_image)."""
     arquivo = None
     if nome_personagem in IMAGENS_LOCAIS:
         caminho = IMAGENS_LOCAIS[nome_personagem]
         if os.path.exists(caminho):
             arquivo = discord.File(caminho, filename=caminho)
-            embed.set_thumbnail(url=f"attachment://{caminho}")
+            embed.set_image(url=f"attachment://{caminho}")
     if arquivo:
         await interaction.response.send_message(embed=embed, file=arquivo, ephemeral=ephemeral)
     else:
@@ -290,7 +287,7 @@ class MenuPrincipal(View):
         if random.random() < 1e-11:
             dados[uid]["personagens"].append("Nenê")
             salvar_dados(dados)
-            embed = criar_card_personagem("Nenê", "Ultimate", "nene", "🌟 A Ultimate apareceu!")
+            embed = criar_card_personagem("Nenê", "Ultimate", "nene", "\n🌟 **A Ultimate apareceu!**")
             await enviar_card(interaction, embed, "Nenê")
             return
 
@@ -336,9 +333,9 @@ class MenuPrincipal(View):
         salvar_dados(dados)
 
         extras = ""
-        if gratis: extras += "🍮 Você não gastou o 💗!\n"
-        if duplicar: extras += "🐱 Amigo duplicado!\n"
-        if reembolso: extras += "💖 Coração devolvido!\n"
+        if gratis: extras += "\n🍮 Você não gastou o 💗!"
+        if duplicar: extras += "\n🐱 Amigo duplicado!"
+        if reembolso: extras += "\n💖 Coração devolvido!"
 
         embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], extras)
         embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
@@ -372,20 +369,15 @@ class MenuPrincipal(View):
     async def drops_possiveis(self, interaction: discord.Interaction, button: Button):
         ordem = {"Ultimate":0, "Mítico":1, "Lendário":2, "Épico":3, "Raro":4, "Incomum":5, "Comum":6}
         chars = sorted(PERSONAGENS, key=lambda x: ordem.get(x["raridade"], 99))
-        # Cria um card por personagem
         embeds = []
         for p in chars:
             embed = criar_card_personagem(p["nome"], p["raridade"], p["efeito"])
-            # Se tiver imagem, adiciona como thumbnail (precisa do arquivo)
             if p["nome"] in IMAGENS_LOCAIS:
                 caminho = IMAGENS_LOCAIS[p["nome"]]
                 if os.path.exists(caminho):
-                    embed.set_thumbnail(url=f"attachment://{caminho}")
+                    embed.set_image(url=f"attachment://{caminho}")
             embeds.append(embed)
-        # Envia o primeiro card com view de paginação
         if embeds:
-            # Para embeds com imagens locais, precisamos enviar o arquivo junto
-            # Vamos criar uma PaginaView que gerencia a exibição dos cards
             view = CardsPaginaView(embeds, 0)
             await view.enviar(interaction, ephemeral=True)
         else:
@@ -399,7 +391,7 @@ class MenuPrincipal(View):
     async def tutorial_ajuda(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("O que você gostaria de ver?", view=TutorialAjudaView(), ephemeral=True)
 
-# ---------- View de paginação para cards individuais (com suporte a imagens locais) ----------
+# ---------- View de paginação para cards GRANDES ----------
 class CardsPaginaView(View):
     def __init__(self, embeds, current):
         super().__init__(timeout=120)
@@ -412,29 +404,26 @@ class CardsPaginaView(View):
         self.children[1].disabled = self.current == len(self.embeds) - 1
 
     async def enviar(self, interaction, ephemeral=True):
-        """Envia a mensagem inicial com o primeiro card e imagem se necessário."""
         embed = self.embeds[self.current]
-        # Verifica se o embed tem thumbnail com attachment://
-        file = None
-        if embed.thumbnail.url and embed.thumbnail.url.startswith("attachment://"):
-            filename = embed.thumbnail.url.split("attachment://")[1]
-            if os.path.exists(filename):
-                file = discord.File(filename, filename=filename)
+        file = self._get_image_file(embed)
         if file:
             await interaction.response.send_message(embed=embed, file=file, view=self, ephemeral=ephemeral)
         else:
             await interaction.response.send_message(embed=embed, view=self, ephemeral=ephemeral)
+
+    def _get_image_file(self, embed):
+        if embed.image.url and embed.image.url.startswith("attachment://"):
+            filename = embed.image.url.split("attachment://")[1]
+            if os.path.exists(filename):
+                return discord.File(filename, filename=filename)
+        return None
 
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
     async def anterior(self, interaction: discord.Interaction, button: Button):
         self.current -= 1
         self.update_buttons()
         embed = self.embeds[self.current]
-        file = None
-        if embed.thumbnail.url and embed.thumbnail.url.startswith("attachment://"):
-            filename = embed.thumbnail.url.split("attachment://")[1]
-            if os.path.exists(filename):
-                file = discord.File(filename, filename=filename)
+        file = self._get_image_file(embed)
         if file:
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         else:
@@ -445,11 +434,7 @@ class CardsPaginaView(View):
         self.current += 1
         self.update_buttons()
         embed = self.embeds[self.current]
-        file = None
-        if embed.thumbnail.url and embed.thumbnail.url.startswith("attachment://"):
-            filename = embed.thumbnail.url.split("attachment://")[1]
-            if os.path.exists(filename):
-                file = discord.File(filename, filename=filename)
+        file = self._get_image_file(embed)
         if file:
             await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
         else:
@@ -505,7 +490,7 @@ class LojaCafeView(View):
         personagem = sortear_personagem(uid, dados, cupom_raridade=True)
         dados[uid]["personagens"].append(personagem["nome"])
         salvar_dados(dados)
-        embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], "🍀 Cupom da Sorte utilizado!")
+        embed = criar_card_personagem(personagem["nome"], personagem["raridade"], personagem["efeito"], "\n🍀 **Cupom da Sorte utilizado!**")
         await enviar_card(interaction, embed, personagem["nome"])
 
     @discord.ui.button(label="Resgatar Hello Kitty (100 frags) 👑", style=discord.ButtonStyle.danger)
@@ -520,7 +505,7 @@ class LojaCafeView(View):
         bonus = random.randint(1,5)
         dados[uid]["fragmentos"] += bonus
         salvar_dados(dados)
-        embed = criar_card_personagem("Hello Kitty", "Mítico", "hello_kitty", f"👑 Resgatada! +{bonus} fragmentos extras.")
+        embed = criar_card_personagem("Hello Kitty", "Mítico", "hello_kitty", f"\n👑 Resgatada! +{bonus} fragmentos extras.")
         await enviar_card(interaction, embed, "Hello Kitty")
 
     @discord.ui.button(label="Loja de Moedas 🪙", style=discord.ButtonStyle.secondary)
@@ -552,7 +537,7 @@ class LojaCafeView(View):
             dados[uid]["moedas"] -= preco
             dados[uid]["personagens"].append(nome)
             salvar_dados(dados)
-            embed = criar_card_personagem(nome, p["raridade"], p["efeito"], f"💰 Comprado por {preco}🪙")
+            embed = criar_card_personagem(nome, p["raridade"], p["efeito"], f"\n💰 Comprado por {preco}🪙")
             embed.set_footer(text=f"Saldo restante: {dados[uid]['moedas']}🪙")
             await enviar_card(interaction_select, embed, nome)
         select.callback = callback
@@ -662,7 +647,7 @@ class TurmaAcoesView(View):
             dados[uid]["personagens"].remove(nome)
             dados[uid]["moedas"] = dados[uid].get("moedas", 0) + valor
             salvar_dados(dados)
-            embed = criar_card_personagem(nome, raridade, next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None), f"💰 Vendido por {valor}🪙")
+            embed = criar_card_personagem(nome, raridade, next((p["efeito"] for p in PERSONAGENS if p["nome"] == nome), None), f"\n💰 Vendido por {valor}🪙")
             embed.set_footer(text=f"Total de moedas: {dados[uid]['moedas']}")
             await enviar_card(interaction_select, embed, nome)
         select.callback = callback
@@ -688,7 +673,7 @@ class TurmaAcoesView(View):
         novo = sortear_personagem(uid, dados)
         dados[uid]["personagens"].append(novo["nome"])
         salvar_dados(dados)
-        embed = criar_card_personagem(novo["nome"], novo["raridade"], novo["efeito"], f"🔄 Trocou 2× {nome}")
+        embed = criar_card_personagem(novo["nome"], novo["raridade"], novo["efeito"], f"\n🔄 Trocou 2× {nome}")
         await enviar_card(interaction, embed, novo["nome"])
 
     @discord.ui.button(label="Hangyodon: Reciclar duplicata ♻️", style=discord.ButtonStyle.danger)
