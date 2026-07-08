@@ -349,9 +349,10 @@ class MenuPrincipal(View):
             ),
             color=0xFFD700
         )
+        # Adiciona loja.png como capa (imagem principal) se existir
         if os.path.exists(LOJA_IMAGEM):
             file = discord.File(LOJA_IMAGEM, filename=LOJA_IMAGEM)
-            embed.set_thumbnail(url=f"attachment://{LOJA_IMAGEM}")
+            embed.set_image(url=f"attachment://{LOJA_IMAGEM}")
             await interaction.response.send_message(embed=embed, file=file, view=LojaCafeView(uid), ephemeral=True)
         else:
             await interaction.response.send_message(embed=embed, view=LojaCafeView(uid), ephemeral=True)
