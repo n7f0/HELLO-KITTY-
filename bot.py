@@ -249,12 +249,13 @@ def criar_card_personagem(nome_personagem, raridade, efeito, extras=""):
     return embed
 
 async def enviar_card(interaction, embed, nome_personagem, ephemeral=False):
+    """Envia embed com imagem principal (set_image) se a imagem local existir."""
     arquivo = None
     if nome_personagem in IMAGENS_LOCAIS:
         caminho = IMAGENS_LOCAIS[nome_personagem]
         if os.path.exists(caminho):
             arquivo = discord.File(caminho, filename=caminho)
-            embed.set_thumbnail(url=f"attachment://{caminho}")
+            embed.set_image(url=f"attachment://{caminho}")  # imagem grande no topo
     if arquivo:
         await interaction.response.send_message(embed=embed, file=arquivo, ephemeral=ephemeral)
     else:
@@ -349,7 +350,7 @@ class MenuPrincipal(View):
             ),
             color=0xFFD700
         )
-        # Adiciona loja.png como capa (imagem principal) se existir
+        # A loja.png agora como capa (imagem grande)
         if os.path.exists(LOJA_IMAGEM):
             file = discord.File(LOJA_IMAGEM, filename=LOJA_IMAGEM)
             embed.set_image(url=f"attachment://{LOJA_IMAGEM}")
