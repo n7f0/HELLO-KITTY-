@@ -7,8 +7,12 @@ import json
 import os
 import datetime
 import asyncio
+import warnings
 import google.generativeai as genai
 from collections import defaultdict
+
+# Suprimir aviso de depreciação
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # =================== CONFIGURAÇÕES ===================
 TOKEN = os.getenv("TOKEN")
@@ -355,7 +359,6 @@ class MenuPrincipal(View):
         if not gratis:
             dados[uid]["coracoes"] -= 1
 
-        # Nenê (chance independente)
         if random.random() < 1e-11:
             shiny = random.random() < 0.005
             nome_final = "Nenê" if not shiny else "✨ Nenê Cristal"
@@ -365,7 +368,6 @@ class MenuPrincipal(View):
                                   description=f"**Raridade:** Ultimate\n**Habilidade:** {EFEITOS_DESC['nene']}",
                                   color=CORES_RARIDADE["Ultimate"])
             await enviar_card(interaction, embed, "Nenê")
-            # Missões compra
             if "compras" in dados[uid].get("missoes_diarias", {}):
                 dados[uid]["missoes_diarias"]["compras"] += 1
             if "compras" in dados[uid].get("missoes_semanais", {}):
@@ -384,19 +386,16 @@ class MenuPrincipal(View):
         if duplicar:
             dados[uid]["personagens"].append(nome_final)
 
-        # Fragmentos Hello Kitty
         if personagem["nome"] == "Hello Kitty":
             frags = random.randint(1, 5)
             dados[uid]["fragmentos"] += frags
 
-        # Efeitos de fragmentos extras
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.10: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "nene") and random.random() < 0.50: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "coro_chan") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "tuxedo_sam") and random.random() < 0.30: dados[uid]["fragmentos"] += 1
         if tem_efeito(uid, dados, "rory") and random.random() < 0.05: dados[uid]["fragmentos"] += 1
 
-        # Reembolso
         reembolso = False
         if tem_efeito(uid, dados, "my_melody") and random.random() < 0.10: reembolso = True
         if tem_efeito(uid, dados, "hello_kitty") and random.random() < 0.20: reembolso = True
@@ -411,13 +410,11 @@ class MenuPrincipal(View):
         if tem_efeito(uid, dados, "mimi") and random.random() < 0.05: dados[uid]["coracoes"] += 1
         if tem_efeito(uid, dados, "lala") and random.random() < 0.10: dados[uid]["coracoes"] += 1
 
-        # Efeitos iniciais
         if personagem["nome"] == "Charmmy Kitty":
             dados[uid]["coracoes"] += 1
         if personagem["nome"] == "Tiny Chum":
             dados[uid]["coracoes"] += 2
 
-        # Missões compra
         if "compras" in dados[uid].get("missoes_diarias", {}):
             dados[uid]["missoes_diarias"]["compras"] += 1
         if "compras" in dados[uid].get("missoes_semanais", {}):
@@ -438,7 +435,6 @@ class MenuPrincipal(View):
         embed.set_footer(text=f"💗: {dados[uid]['coracoes']} | Frag. HK: {dados[uid]['fragmentos']} | 🪙: {dados[uid].get('moedas', 0)}")
         await enviar_card(interaction, embed, personagem["nome"])
 
-        # Conquistas
         novas = verificar_conquistas(uid, dados)
         for c in novas:
             dados[uid]["conquistas"].append(c)
@@ -452,10 +448,7 @@ class MenuPrincipal(View):
             dados[uid] = novo_jogador()
             salvar_dados(dados)
 
-        embed = discord.Embed(
-            title="🛍️ Loja do Hello Kitty Café",
-            color=0xFFD700
-        )
+        embed = discord.Embed(title="🛍️ Loja do Hello Kitty Café", color=0xFFD700)
         embed.add_field(name="Recursos", value=f"💗 {dados[uid]['coracoes']} | 🍬 {dados[uid].get('doces',0)} | 🪙 {dados[uid].get('moedas',0)}", inline=False)
         embed.add_field(name="Conversões", value="⚡ 100🍬 → 4💗\n🍀 Cupom da Sorte (200💗+300🍬) → Personagem Raro+\n👑 Resgatar Hello Kitty (100 fragmentos)", inline=False)
         embed.add_field(name="Loja de Moedas", value="🪙 Compre personagens específicos", inline=False)
@@ -499,7 +492,7 @@ class MenuPrincipal(View):
     async def tutorial_ajuda(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("O que você gostaria de ver?", view=TutorialAjudaView(), ephemeral=True)
 
-# ---------- CardsPaginaView (mantida) ----------
+# ---------- CardsPaginaView ----------
 class CardsPaginaView(View):
     def __init__(self, embeds, current):
         super().__init__(timeout=120)
@@ -688,7 +681,7 @@ class LojaCafeView(View):
         view.add_item(select)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-# ---------- Amigos (mantida com adição de missões) ----------
+# ---------- Amigos ----------
 class AmigosView(View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -878,7 +871,6 @@ class AceitarRecusarView(View):
             registro = f"{interaction.user.name} deu **{personagem_alvo}** e recebeu **{self.personagem_oferecido}** de <@{self.solicitante_id}>"
             dados[self.solicitante_id].setdefault("historico_trocas", []).append(registro)
             dados[self.alvo_id].setdefault("historico_trocas", []).append(registro)
-            # Missões troca
             dados[self.solicitante_id]["missoes_diarias"]["trocas"] += 1
             dados[self.solicitante_id]["missoes_semanais"]["trocas"] += 1
             dados[self.alvo_id]["missoes_diarias"]["trocas"] += 1
@@ -1056,7 +1048,7 @@ async def ativar_ia(interaction: discord.Interaction):
     config = carregar_config_ia()
     config[str(interaction.guild.id)] = True
     salvar_config_ia(config)
-    await interaction.response.send_message("🌸 A IA da Hello Kitty foi **ativada**! Use /conversar para falar comigo.", ephemeral=True)
+    await interaction.response.send_message("🌸 A IA da Hello Kitty foi **ativada**! Agora ela vai conversar naturalmente no chat. Use /desativaria para desligar.", ephemeral=True)
 
 @bot.tree.command(name="desativaria", description="Desativar a IA da Hello Kitty no servidor (admin)")
 @app_commands.default_permissions(administrator=True)
@@ -1066,7 +1058,7 @@ async def desativar_ia(interaction: discord.Interaction):
     salvar_config_ia(config)
     await interaction.response.send_message("🌸 A IA da Hello Kitty foi **desativada**.", ephemeral=True)
 
-@bot.tree.command(name="conversar", description="Fale com a Hello Kitty!")
+@bot.tree.command(name="conversar", description="Fale com a Hello Kitty! (modo alternativo)")
 async def conversar(interaction: discord.Interaction, mensagem: str):
     config = carregar_config_ia()
     if not config.get(str(interaction.guild.id), False):
@@ -1085,6 +1077,7 @@ async def conversar(interaction: discord.Interaction, mensagem: str):
         texto = response.text
         await interaction.followup.send(f"🌸 **Hello Kitty:** {texto}")
     except Exception as e:
+        print(f"Erro na IA: {e}")
         await interaction.followup.send("🌸 Ops! A Hello Kitty está descansando... tente de novo mais tarde. 😿")
 
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
@@ -1103,7 +1096,8 @@ async def historinha(interaction: discord.Interaction):
         prompt = f"Crie uma historinha curta e fofa com os seguintes personagens: {', '.join(set(personagens))}. A Hello Kitty é a anfitriã do café."
         response = modelo_ia.generate_content(prompt)
         await interaction.followup.send(f"📖 {response.text}")
-    except:
+    except Exception as e:
+        print(f"Erro na historinha: {e}")
         await interaction.followup.send("Erro ao criar historinha.")
 
 @bot.tree.command(name="casamento", description="Una dois personagens especiais para ganhar um bônus!")
@@ -1122,7 +1116,6 @@ async def casamento(interaction: discord.Interaction, personagem1: str, personag
     if p1["nome"] not in dados[uid]["personagens"] or p2["nome"] not in dados[uid]["personagens"]:
         await interaction.response.send_message("Você não possui um desses personagens.", ephemeral=True)
         return
-    # Casais especiais
     casais = {("hello kitty", "dear daniel"): {"coracoes": 20, "doces": 10}}
     chave = tuple(sorted([p1["nome"].lower(), p2["nome"].lower()]))
     if chave in casais:
@@ -1134,34 +1127,15 @@ async def casamento(interaction: discord.Interaction, personagem1: str, personag
     else:
         await interaction.response.send_message("Esses dois não formam um casal especial, mas são amigos fofos!")
 
-# ---------- Tarefas ----------
-@tasks.loop(hours=24)
-async def enviar_resumos_diarios():
-    dados = carregar_dados()
-    for uid, jogador in dados.items():
-        if jogador.get("resumo_dm", False):
-            try:
-                user = await bot.fetch_user(int(uid))
-                msg = f"🌸 **Resumo Diário do Café**\n💗 Corações: {jogador['coracoes']}\n🍬 Doces: {jogador.get('doces',0)}\n🪙 Moedas: {jogador.get('moedas',0)}\nTenha um dia fofo!"
-                await user.send(msg)
-            except:
-                pass
-
-@bot.event
-async def on_ready():
-    print(f"🌸 {bot.user} está no Hello Kitty Café!")
-    bot.add_view(MenuPrincipal())
-    if GUILD_ID:
-        guild = discord.Object(id=int(GUILD_ID))
-        bot.tree.copy_global_to(guild=guild)
-        await bot.tree.sync(guild=guild)
-    else:
-        await bot.tree.sync()
-    enviar_resumos_diarios.start()
+# =================== RESPOSTA NATURAL DA IA ===================
+ia_cooldowns = {}
 
 @bot.event
 async def on_message(message):
-    if message.author.bot: return
+    if message.author.bot:
+        return
+
+    # Jogo (dados)
     dados = carregar_dados()
     uid = str(message.author.id)
     if uid not in dados:
@@ -1225,7 +1199,7 @@ async def on_message(message):
         jogador["fragmentos"] += 1
         await notificar_meta(uid, f"sasa_{mensagens}", f"🐱 Sasa: +1 fragmento Hello! ({mensagens} msgs)")
 
-    # Verificar conclusão de missões (simplificado)
+    # Verificar conclusão de missões
     for missao in MISSOES_DIARIAS:
         if jogador["missoes_diarias"].get(missao["id"], 0) >= missao["meta"] and f"diaria_{missao['id']}" not in jogador.get("missoes_concluidas", []):
             jogador.setdefault("missoes_concluidas", []).append(f"diaria_{missao['id']}")
@@ -1241,7 +1215,65 @@ async def on_message(message):
             await notificar_meta(uid, f"missaos_{missao['id']}", f"✅ Missão semanal concluída: {missao['desc']}! Recompensa: {missao['recompensa']}")
 
     salvar_dados(dados)
+
+    # --- RESPOSTA NATURAL DA IA ---
+    if not modelo_ia:
+        await bot.process_commands(message)
+        return
+
+    config = carregar_config_ia()
+    if not config.get(str(message.guild.id), False):
+        await bot.process_commands(message)
+        return
+
+    # Cooldown por canal (10 segundos)
+    canal_id = message.channel.id
+    if canal_id in ia_cooldowns and datetime.datetime.utcnow().timestamp() - ia_cooldowns[canal_id] < 10:
+        await bot.process_commands(message)
+        return
+
+    ia_cooldowns[canal_id] = datetime.datetime.utcnow().timestamp()
+
+    try:
+        prompt = f"""Você é a Hello Kitty, uma gatinha meiga e amigável do universo Sanrio.
+Você está em um chat do Discord no servidor "Hello Kitty Café", um joguinho de colecionar personagens.
+Converse naturalmente com os membros, dê dicas fofas sobre o jogo, e mantenha um tom animado.
+Responda em português, de forma curta e amigável.
+Mensagem recebida: {message.content}"""
+        response = modelo_ia.generate_content(prompt)
+        texto = response.text
+        if len(texto) > 2000:
+            texto = texto[:1997] + "..."
+        await message.channel.send(f"🌸 {texto}")
+    except Exception as e:
+        print(f"Erro na resposta natural da IA: {e}")
+
     await bot.process_commands(message)
+
+# ---------- Tarefas ----------
+@tasks.loop(hours=24)
+async def enviar_resumos_diarios():
+    dados = carregar_dados()
+    for uid, jogador in dados.items():
+        if jogador.get("resumo_dm", False):
+            try:
+                user = await bot.fetch_user(int(uid))
+                msg = f"🌸 **Resumo Diário do Café**\n💗 Corações: {jogador['coracoes']}\n🍬 Doces: {jogador.get('doces',0)}\n🪙 Moedas: {jogador.get('moedas',0)}\nTenha um dia fofo!"
+                await user.send(msg)
+            except:
+                pass
+
+@bot.event
+async def on_ready():
+    print(f"🌸 {bot.user} está no Hello Kitty Café!")
+    bot.add_view(MenuPrincipal())
+    if GUILD_ID:
+        guild = discord.Object(id=int(GUILD_ID))
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+    else:
+        await bot.tree.sync()
+    enviar_resumos_diarios.start()
 
 if __name__ == "__main__":
     bot.run(TOKEN)
