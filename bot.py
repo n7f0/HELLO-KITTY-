@@ -7,6 +7,7 @@ import json
 import os
 import datetime
 from datetime import timezone
+import asyncio
 import asyncpg
 import logging
 from collections import defaultdict
@@ -18,6 +19,9 @@ GUILD_ID = os.getenv("GUILD_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 logging.basicConfig(level=logging.INFO)
+
+# =================== CONTROLE DA IA ===================
+ia_ativa = True  # Começa ligada
 
 # =================== BANCO DE DADOS ===================
 db_pool = None
@@ -62,42 +66,66 @@ async def init_db():
                 timestamp BIGINT
             )
         ''')
-        # Tabela para controle da IA por canal
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS canais_ia (
-                guild_id BIGINT NOT NULL,
-                channel_id BIGINT PRIMARY KEY,
-                ativo BOOLEAN DEFAULT TRUE
-            )
-        ''')
         logging.info("Banco de dados inicializado.")
 
-# ===== FUNÇÕES PARA CONTROLE DE IA POR CANAL =====
-async def is_ia_active(channel_id: int) -> bool:
+async def get_user_data(user_id):
     async with db_pool.acquire() as conn:
-        row = await conn.fetchrow('SELECT ativo FROM canais_ia WHERE channel_id = $1', channel_id)
-        if row is None:
-            return True  # padrão: ativo
-        return row['ativo']
+        row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
+        if not row:
+            default = {
+                "coracoes": 3, "doces": 0, "fragmentos": 0, "moedas": 0,
+                "msg_count": 0, "coracoes_ganhos": 0, "ultimo_doce": 0,
+                "xp": 0, "nivel": 1, "conquistas": [], "missoes_diarias": {},
+                "missoes_semanais": {}, "missoes_concluidas": [],
+                "decoracoes": [], "decoracao_ativa": {}, "lista_desejos": [],
+                "resumo_dm": False, "ultimo_drop": 0,
+                "personagens": [], "historico_trocas": []
+            }
+            await conn.execute('''
+                INSERT INTO users (
+                    id, coracoes, doces, fragmentos, moedas, msg_count,
+                    coracoes_ganhos, ultimo_doce, xp, nivel, conquistas,
+                    missoes_diarias, missoes_semanais, missoes_concluidas,
+                    decoracoes, decoracao_ativa, lista_desejos, resumo_dm,
+                    ultimo_drop, personagens, historico_trocas
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            ''', user_id, default["coracoes"], default["doces"], default["fragmentos"],
+               default["moedas"], default["msg_count"], default["coracoes_ganhos"],
+               default["ultimo_doce"], default["xp"], default["nivel"],
+               json.dumps(default["conquistas"]), json.dumps(default["missoes_diarias"]),
+               json.dumps(default["missoes_semanais"]), json.dumps(default["missoes_concluidas"]),
+               json.dumps(default["decoracoes"]), json.dumps(default["decoracao_ativa"]),
+               json.dumps(default["lista_desejos"]), default["resumo_dm"],
+               default["ultimo_drop"], json.dumps(default["personagens"]),
+               json.dumps(default["historico_trocas"]))
+            row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
+        data = dict(row)
+        for key in ['conquistas', 'missoes_diarias', 'missoes_semanais', 'missoes_concluidas',
+                    'decoracoes', 'decoracao_ativa', 'lista_desejos', 'personagens', 'historico_trocas']:
+            if isinstance(data[key], str):
+                data[key] = json.loads(data[key])
+        return data
 
-async def toggle_ia_channel(guild_id: int, channel_id: int) -> bool:
+async def update_user_data(user_id, data):
     async with db_pool.acquire() as conn:
-        row = await conn.fetchrow('SELECT ativo FROM canais_ia WHERE channel_id = $1', channel_id)
-        if row is None:
-            await conn.execute('INSERT INTO canais_ia (guild_id, channel_id, ativo) VALUES ($1, $2, $3)',
-                               guild_id, channel_id, True)
-            novo_estado = False
-            await conn.execute('UPDATE canais_ia SET ativo = $1 WHERE channel_id = $2', novo_estado, channel_id)
-        else:
-            novo_estado = not row['ativo']
-            await conn.execute('UPDATE canais_ia SET ativo = $1 WHERE channel_id = $2', novo_estado, channel_id)
-        return novo_estado
-
-async def get_canais_config(guild_id: int):
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch('SELECT channel_id, ativo FROM canais_ia WHERE guild_id = $1', guild_id)
-        config = {row['channel_id']: row['ativo'] for row in rows}
-        return config
+        await conn.execute('''
+            UPDATE users SET
+                coracoes = $1, doces = $2, fragmentos = $3, moedas = $4,
+                msg_count = $5, coracoes_ganhos = $6, ultimo_doce = $7,
+                xp = $8, nivel = $9, conquistas = $10,
+                missoes_diarias = $11, missoes_semanais = $12, missoes_concluidas = $13,
+                decoracoes = $14, decoracao_ativa = $15, lista_desejos = $16,
+                resumo_dm = $17, ultimo_drop = $18, personagens = $19,
+                historico_trocas = $20
+            WHERE id = $21
+        ''', data['coracoes'], data['doces'], data['fragmentos'], data['moedas'],
+           data['msg_count'], data['coracoes_ganhos'], data['ultimo_doce'],
+           data['xp'], data['nivel'], json.dumps(data['conquistas']),
+           json.dumps(data['missoes_diarias']), json.dumps(data['missoes_semanais']),
+           json.dumps(data['missoes_concluidas']), json.dumps(data['decoracoes']),
+           json.dumps(data['decoracao_ativa']), json.dumps(data['lista_desejos']),
+           data['resumo_dm'], data['ultimo_drop'], json.dumps(data['personagens']),
+           json.dumps(data['historico_trocas']), user_id)
 
 # =================== IA (Gemini) ===================
 import google.generativeai as genai
@@ -548,65 +576,6 @@ class MenuPrincipal(View):
     @discord.ui.button(label="Tutorial/Ajuda ❔", style=discord.ButtonStyle.secondary, custom_id="tutorial_ajuda")
     async def tutorial_ajuda(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("O que você gostaria de ver?", view=TutorialAjudaView(), ephemeral=True)
-
-    # ===== BOTÃO CONFIGURAR IA (agora chama a criação assíncrona) =====
-    @discord.ui.button(label="Configurar IA 💬", style=discord.ButtonStyle.blurple, custom_id="config_ia")
-    async def configurar_ia(self, interaction: discord.Interaction, button: Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Apenas administradores podem configurar a IA.", ephemeral=True)
-            return
-        # Cria a view de forma assíncrona
-        view = await ConfigIAView.create(interaction.guild.id)
-        await interaction.response.send_message("🔧 Selecione um canal para ativar/desativar a Hello Kitty:", view=view, ephemeral=True)
-
-# ===== VIEW DE CONFIGURAÇÃO DA IA (corrigida) =====
-class ConfigIAView(View):
-    def __init__(self, options):
-        super().__init__(timeout=120)
-        self.add_item(SelectIAChannels(options))
-
-    @classmethod
-    async def create(cls, guild_id: int):
-        """Cria a view de forma assíncrona, carregando os dados do banco."""
-        guild = bot.get_guild(guild_id)
-        if not guild:
-            options = [discord.SelectOption(label="Erro: servidor não encontrado", value="error")]
-        else:
-            channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
-            config = await get_canais_config(guild_id)
-            options = []
-            for ch in channels[:25]:  # limite de 25 opções
-                # Se não estiver no config, assume ativo (True)
-                estado = config.get(ch.id, True)
-                status_texto = "✅ Ativo" if estado else "❌ Desativado"
-                options.append(discord.SelectOption(
-                    label=f"#{ch.name}",
-                    description=f"Status: {status_texto}",
-                    value=str(ch.id)
-                ))
-            if not options:
-                options = [discord.SelectOption(label="Nenhum canal de texto encontrado", value="error")]
-        return cls(options)
-
-class SelectIAChannels(Select):
-    def __init__(self, options):
-        super().__init__(placeholder="Selecione um canal para alternar...", options=options, min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "error":
-            await interaction.response.send_message("❌ Erro ao carregar canais.", ephemeral=True)
-            return
-        channel_id = int(self.values[0])
-        guild_id = interaction.guild.id
-        novo_estado = await toggle_ia_channel(guild_id, channel_id)
-        status_texto = "✅ **ativada**" if novo_estado else "❌ **desativada**"
-        await interaction.response.send_message(
-            f"💬 A Hello Kitty agora está {status_texto} no canal <#{channel_id}>.",
-            ephemeral=True
-        )
-        # Desabilita o select para evitar múltiplas interações
-        self.disabled = True
-        await interaction.message.edit(view=self.view)
 
 # ---------- CardsPaginaView ----------
 class CardsPaginaView(View):
@@ -1260,15 +1229,18 @@ class AdivinheModal(Modal, title="Adivinhe o Personagem"):
         else:
             await interaction.response.send_message(f"❌ Errado! O personagem era **{self.nome_correto}**.", ephemeral=True)
 
-# ---------- COMANDO PARA CONFIGURAR IA (ALTERNATIVO) ----------
-@bot.tree.command(name="configurar_ia", description="Ativar/desativar a Hello Kitty em um canal (Admin)")
-@app_commands.default_permissions(administrator=True)
-async def configurar_ia_cmd(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
-        return
-    view = await ConfigIAView.create(interaction.guild.id)
-    await interaction.response.send_message("🔧 Selecione um canal para ativar/desativar a Hello Kitty:", view=view, ephemeral=True)
+# ---------- 🆕 COMANDOS PARA ATIVAR/DESATIVAR A IA ----------
+@bot.tree.command(name="ativar_ia", description="Ativa a resposta automática da Hello Kitty nas mensagens")
+async def ativar_ia(interaction: discord.Interaction):
+    global ia_ativa
+    ia_ativa = True
+    await interaction.response.send_message("🌸 **Hello Kitty ativada!** Agora ela vai responder automaticamente às mensagens do canal.", ephemeral=True)
+
+@bot.tree.command(name="desativar_ia", description="Desativa a resposta automática da Hello Kitty nas mensagens")
+async def desativar_ia(interaction: discord.Interaction):
+    global ia_ativa
+    ia_ativa = False
+    await interaction.response.send_message("🌸 **Hello Kitty desativada!** Ela não vai mais responder automaticamente.", ephemeral=True)
 
 # ---------- Comandos de IA ----------
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
@@ -1420,12 +1392,8 @@ async def on_message(message):
 
     await update_user_data(uid, dados)
 
-    # ---------- Resposta natural da IA (somente se o canal estiver ativo) ----------
-    if not cliente_ia:
-        await bot.process_commands(message)
-        return
-
-    if not await is_ia_active(message.channel.id):
+    # ---------- Resposta natural da IA (somente se estiver ativa) ----------
+    if not ia_ativa or not cliente_ia:
         await bot.process_commands(message)
         return
 
