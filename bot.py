@@ -26,7 +26,6 @@ async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
     async with db_pool.acquire() as conn:
-        # Tabela de usuários (já existente)
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -63,7 +62,7 @@ async def init_db():
                 timestamp BIGINT
             )
         ''')
-        # ===== NOVA TABELA para controle da IA por canal =====
+        # Tabela para controle da IA por canal
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS canais_ia (
                 guild_id BIGINT NOT NULL,
@@ -75,7 +74,6 @@ async def init_db():
 
 # ===== FUNÇÕES PARA CONTROLE DE IA POR CANAL =====
 async def is_ia_active(channel_id: int) -> bool:
-    """Retorna True se a IA está ativa no canal (ou se não houver configuração)."""
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow('SELECT ativo FROM canais_ia WHERE channel_id = $1', channel_id)
         if row is None:
@@ -83,11 +81,9 @@ async def is_ia_active(channel_id: int) -> bool:
         return row['ativo']
 
 async def toggle_ia_channel(guild_id: int, channel_id: int) -> bool:
-    """Alterna o estado da IA no canal e retorna o novo estado."""
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow('SELECT ativo FROM canais_ia WHERE channel_id = $1', channel_id)
         if row is None:
-            # Insere como ativo (True) e depois desativa para alternar
             await conn.execute('INSERT INTO canais_ia (guild_id, channel_id, ativo) VALUES ($1, $2, $3)',
                                guild_id, channel_id, True)
             novo_estado = False
@@ -98,7 +94,6 @@ async def toggle_ia_channel(guild_id: int, channel_id: int) -> bool:
         return novo_estado
 
 async def get_canais_config(guild_id: int):
-    """Retorna um dicionário {channel_id: ativo} para todos os canais do servidor."""
     async with db_pool.acquire() as conn:
         rows = await conn.fetch('SELECT channel_id, ativo FROM canais_ia WHERE guild_id = $1', guild_id)
         config = {row['channel_id']: row['ativo'] for row in rows}
@@ -554,43 +549,47 @@ class MenuPrincipal(View):
     async def tutorial_ajuda(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_message("O que você gostaria de ver?", view=TutorialAjudaView(), ephemeral=True)
 
-    # ===== NOVO BOTÃO: Configurar IA (apenas admins) =====
+    # ===== BOTÃO CONFIGURAR IA (agora chama a criação assíncrona) =====
     @discord.ui.button(label="Configurar IA 💬", style=discord.ButtonStyle.blurple, custom_id="config_ia")
     async def configurar_ia(self, interaction: discord.Interaction, button: Button):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ Apenas administradores podem configurar a IA.", ephemeral=True)
             return
-        await interaction.response.send_message("🔧 Selecione um canal para ativar/desativar a Hello Kitty:", view=ConfigIAView(interaction.guild.id), ephemeral=True)
+        # Cria a view de forma assíncrona
+        view = await ConfigIAView.create(interaction.guild.id)
+        await interaction.response.send_message("🔧 Selecione um canal para ativar/desativar a Hello Kitty:", view=view, ephemeral=True)
 
-# ===== VIEW DE CONFIGURAÇÃO DA IA =====
+# ===== VIEW DE CONFIGURAÇÃO DA IA (corrigida) =====
 class ConfigIAView(View):
-    def __init__(self, guild_id):
+    def __init__(self, options):
         super().__init__(timeout=120)
-        self.guild_id = guild_id
-        self.add_item(SelectIAChannels(guild_id))
+        self.add_item(SelectIAChannels(options))
 
-class SelectIAChannels(Select):
-    def __init__(self, guild_id):
-        self.guild_id = guild_id
-        # Buscar canais de texto do servidor
+    @classmethod
+    async def create(cls, guild_id: int):
+        """Cria a view de forma assíncrona, carregando os dados do banco."""
         guild = bot.get_guild(guild_id)
         if not guild:
             options = [discord.SelectOption(label="Erro: servidor não encontrado", value="error")]
         else:
             channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
+            config = await get_canais_config(guild_id)
             options = []
             for ch in channels[:25]:  # limite de 25 opções
-                estado = "✅ Ativo" if ch.id in await get_canais_config(guild_id) and (await get_canais_config(guild_id)).get(ch.id, True) else "❌ Desativado"
-                # Se não estiver na tabela, assume ativo
-                if ch.id not in await get_canais_config(guild_id):
-                    estado = "✅ Ativo"
+                # Se não estiver no config, assume ativo (True)
+                estado = config.get(ch.id, True)
+                status_texto = "✅ Ativo" if estado else "❌ Desativado"
                 options.append(discord.SelectOption(
                     label=f"#{ch.name}",
-                    description=f"Status: {estado}",
+                    description=f"Status: {status_texto}",
                     value=str(ch.id)
                 ))
             if not options:
                 options = [discord.SelectOption(label="Nenhum canal de texto encontrado", value="error")]
+        return cls(options)
+
+class SelectIAChannels(Select):
+    def __init__(self, options):
         super().__init__(placeholder="Selecione um canal para alternar...", options=options, min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
@@ -601,13 +600,11 @@ class SelectIAChannels(Select):
         guild_id = interaction.guild.id
         novo_estado = await toggle_ia_channel(guild_id, channel_id)
         status_texto = "✅ **ativada**" if novo_estado else "❌ **desativada**"
-        # Atualizar a mensagem com o novo status para o canal selecionado
         await interaction.response.send_message(
             f"💬 A Hello Kitty agora está {status_texto} no canal <#{channel_id}>.",
             ephemeral=True
         )
-        # Atualizar a view para mostrar o novo estado (opcional: recriar a view)
-        # Simplesmente desabilitamos o select para não gerar confusão
+        # Desabilita o select para evitar múltiplas interações
         self.disabled = True
         await interaction.message.edit(view=self.view)
 
@@ -1263,14 +1260,15 @@ class AdivinheModal(Modal, title="Adivinhe o Personagem"):
         else:
             await interaction.response.send_message(f"❌ Errado! O personagem era **{self.nome_correto}**.", ephemeral=True)
 
-# ---------- COMANDO SLASH PARA CONFIGURAR IA (ALTERNATIVO) ----------
+# ---------- COMANDO PARA CONFIGURAR IA (ALTERNATIVO) ----------
 @bot.tree.command(name="configurar_ia", description="Ativar/desativar a Hello Kitty em um canal (Admin)")
 @app_commands.default_permissions(administrator=True)
 async def configurar_ia_cmd(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
         return
-    await interaction.response.send_message("🔧 Selecione um canal para ativar/desativar a Hello Kitty:", view=ConfigIAView(interaction.guild.id), ephemeral=True)
+    view = await ConfigIAView.create(interaction.guild.id)
+    await interaction.response.send_message("🔧 Selecione um canal para ativar/desativar a Hello Kitty:", view=view, ephemeral=True)
 
 # ---------- Comandos de IA ----------
 @bot.tree.command(name="historinha", description="A Hello Kitty conta uma historinha com seus personagens!")
@@ -1427,7 +1425,6 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    # Verifica se a IA está ativa neste canal
     if not await is_ia_active(message.channel.id):
         await bot.process_commands(message)
         return
