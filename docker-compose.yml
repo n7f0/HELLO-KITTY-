@@ -1,0 +1,27 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15
+    container_name: bot-coffee-db
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: senha_segura_aqui
+      POSTGRES_DB: bot_coffee_db
+    volumes:
+      - db_data_coffee:/var/lib/postgresql/data
+
+  bot:
+    build: .
+    container_name: bot-coffee-app
+    restart: always
+    depends_on:
+      - db
+    environment:
+      - TOKEN=SEU_TOKEN_DO_DISCORD_AQUI
+      - DATABASE_URL=postgresql://admin:senha_segura_aqui@db:5432/bot_coffee_db
+      - GUILD_ID=ID_DO_SEU_SERVIDOR
+      - GEMINI_API_KEY=SUA_CHAVE_GEMINI_AQUI
+
+volumes:
+  db_data_coffee:
