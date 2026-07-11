@@ -18,10 +18,10 @@ services:
     depends_on:
       - db
     environment:
-      - TOKEN=SEU_TOKEN_DO_DISCORD_AQUI
+      - TOKEN=${TOKEN}
       - DATABASE_URL=postgresql://admin:sua_senha_segura@db:5432/cafe_db
-      - GEMINI_API_KEY=SUA_CHAVE_GEMINI_AQUI
-      - GUILD_ID=ID_DO_SEU_SERVIDOR_AQUI
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GUILD_ID=${GUILD_ID}
 
 volumes:
   db_data_cafe:
